@@ -71,16 +71,6 @@ func (t *targetBuilder) addSrcs(srcs *treeset.Set) *targetBuilder {
 
 // addModuleDependency adds a single module dep to the target.
 func (t *targetBuilder) addModuleDependency(dep Module) *targetBuilder {
-	fileName := dep.Name + ".py"
-	if dep.From != "" {
-		fileName = dep.From + ".py"
-	}
-	if t.siblingSrcs.Contains(fileName) && fileName != filepath.Base(dep.Filepath) {
-		// importing another module from the same package, converting to absolute imports to make
-		// dependency resolution easier
-		dep.Name = importSpecFromSrc(t.pythonProjectRoot, t.bzlPackage, fileName).Imp
-	}
-
 	addModuleToTreeSet(t.deps, dep)
 	return t
 }
