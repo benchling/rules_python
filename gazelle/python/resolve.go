@@ -127,9 +127,14 @@ func (py *Resolver) Embeds(r *rule.Rule, from label.Label) []label.Label {
 // whether the module is type-checking only.
 func addDependency(dep string, mod Module, deps, pyiDeps *treeset.Set) {
 	if mod.TypeCheckingOnly {
-		pyiDeps.Add(dep)
+		// Only add to pyiDeps if not already in deps
+		if !deps.Contains(dep) {
+			pyiDeps.Add(dep)
+		}
 	} else {
 		deps.Add(dep)
+		// If this dependency was previously added as a pyi_dep, remove it
+		pyiDeps.Remove(dep)
 	}
 }
 

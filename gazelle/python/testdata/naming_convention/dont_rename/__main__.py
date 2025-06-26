@@ -13,4 +13,4 @@
 # limitations under the License.
 
 # For test purposes only.
-import __init__
+import dont_rename.__init__
