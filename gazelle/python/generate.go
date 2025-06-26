@@ -319,17 +319,120 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 	}
 	if cfg.PerFileGeneration() {
 		hasInit, nonEmptyInit := hasLibraryEntrypointFile(args.Dir)
-		pyLibraryFilenames.Each(func(index int, filename interface{}) {
-			pyLibraryTargetName := strings.TrimSuffix(filepath.Base(filename.(string)), ".py")
+
+		existingMultiFileLibs := make(map[string]*treeset.Set)
+		filesInExistingMultiFileLibs := treeset.NewWith(godsutils.StringComparator)
+
+		if args.File != nil {
+			for _, r := range args.File.Rules {
+				kindName := r.Kind()
+				if kindInfo, ok := args.Config.KindMap[kindName]; ok {
+					kindName = kindInfo.KindName
+				}
+
+				if kindName == actualPyLibraryKind {
+					srcsList := r.AttrStrings("srcs")
+					if len(srcsList) > 0 { // Consider only libs with sources
+						// If a library has multiple sources, or if its single source
+						// implies a target name different from the source file name,
+						// it's treated as a "multi-file" or "custom-named" lib.
+						// For this specific issue, we are interested in multi-source files.
+						// A simpler check could be len(srcsList) > 1, but let's also consider
+						// if a single src lib was manually named differently.
+						// The core idea is to identify libs that aren't simple file-to-target mappings.
+
+						// For this fix, we are primarily concerned with targets that group multiple files.
+						// A py_library with a single source file (e.g. `custom_lib(srcs=["foo.py"])`)
+						// would typically be regenerated as `foo(srcs=["foo.py"])` in per-file mode
+						// if `custom_lib` is not the name Gazelle would pick for `foo.py`.
+						// The current test case is about `custom(srcs=["bar.py", "baz.py"])`.
+
+						isPotentiallyCustomOrMultiFile := false
+						if len(srcsList) > 1 {
+							isPotentiallyCustomOrMultiFile = true
+						} else if len(srcsList) == 1 {
+							// If it's a single source, check if the rule name is different
+							// from what Gazelle would generate for that single file.
+							expectedName := strings.TrimSuffix(filepath.Base(srcsList[0]), ".py")
+							if r.Name() != expectedName {
+								isPotentiallyCustomOrMultiFile = true
+							}
+						}
+
+						if isPotentiallyCustomOrMultiFile {
+							libSrcs := treeset.NewWith(godsutils.StringComparator)
+							for _, src := range srcsList {
+								libSrcs.Add(src)
+								filesInExistingMultiFileLibs.Add(src)
+							}
+							existingMultiFileLibs[r.Name()] = libSrcs
+						}
+					}
+				}
+			}
+		}
+
+		pyLibraryFilenames.Each(func(index int, filenameRaw interface{}) {
+			filename := filenameRaw.(string)
 			if filename == pyLibraryEntrypointFilename && !nonEmptyInit {
 				return // ignore empty __init__.py.
 			}
+
+			// If the file is part of an existing multi-file library,
+			// that library will be processed separately. Skip individual processing.
+			if filesInExistingMultiFileLibs.Contains(filename) {
+				return
+			}
+
+			// Standard per-file generation for files not in multi-file libs
+			pyLibraryTargetName := strings.TrimSuffix(filepath.Base(filename), ".py")
 			srcs := treeset.NewWith(godsutils.StringComparator, filename)
 			if cfg.PerFileGenerationIncludeInit() && hasInit && nonEmptyInit {
-				srcs.Add(pyLibraryEntrypointFilename)
+				// Add __init__.py if not already part of a multi-file lib and include_init is true.
+				// Need to be careful not to add __init__.py if it itself is in filesInExistingMultiFileLibs
+				// and handled by an existingMultiFileLibs entry.
+				if !filesInExistingMultiFileLibs.Contains(pyLibraryEntrypointFilename) {
+					srcs.Add(pyLibraryEntrypointFilename)
+				}
 			}
 			appendPyLibrary(srcs, pyLibraryTargetName)
 		})
+
+		// Now, process all existing multi-file (or custom-named) libraries
+		for libName, libSrcs := range existingMultiFileLibs {
+			// When regenerating, ensure __init__.py is included if cfg.PerFileGenerationIncludeInit
+			// and the libSrcs don't already contain it, and __init__.py is not part of another multi-file lib.
+			// This logic for __init__ here needs to be consistent with how appendPyLibrary handles it.
+			// For now, just pass libSrcs. appendPyLibrary might need to be smarter or
+			// the srcs set here needs to be augmented carefully.
+			// The original srcs for `custom` in the test case are ["bar.py", "baz.py"].
+			// If include_init is true, and __init__.py exists and is non-empty,
+			// it should ideally be added if not already present.
+			// However, the primary goal is to re-evaluate `custom` with its original sources
+			// to pick up new dependencies.
+			currentSrcsForLib := treeset.NewWith(godsutils.StringComparator)
+			libSrcs.Each(func(_ int, val interface{}) { currentSrcsForLib.Add(val) })
+
+			if cfg.PerFileGenerationIncludeInit() && hasInit && nonEmptyInit && !currentSrcsForLib.Contains(pyLibraryEntrypointFilename) {
+				// Check if __init__.py is itself part of some *other* multi-file lib.
+				// This edge case is complex. For now, assume if we're regenerating `libName`,
+				// and it's supposed to include __init__.py, we add it.
+				isInitHandledSeparately := false
+				if pyLibraryEntrypointFilename != "" { // ensure pyLibraryEntrypointFilename is not empty
+					for otherLibName, otherLibSrcs := range existingMultiFileLibs {
+						if otherLibName != libName && otherLibSrcs.Contains(pyLibraryEntrypointFilename) {
+							isInitHandledSeparately = true
+							break
+						}
+					}
+				}
+				if !isInitHandledSeparately {
+					currentSrcsForLib.Add(pyLibraryEntrypointFilename)
+				}
+			}
+			appendPyLibrary(currentSrcsForLib, libName)
+		}
+
 	} else {
 		appendPyLibrary(pyLibraryFilenames, cfg.RenderLibraryName(packageName))
 	}
