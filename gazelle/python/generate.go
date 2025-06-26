@@ -223,9 +223,40 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 			log.Printf("ERROR: %v\n", err)
 			return language.GenerateResult{}
 		}
-	}
+        }
 
-	parser := newPython3Parser(args.Config.RepoRoot, args.Rel, cfg.IgnoresDependency)
+        existingMultiLibs := []struct{
+                name string
+                srcs *treeset.Set
+        }{}
+        if cfg.PerFileGeneration() && args.File != nil {
+                for _, r := range args.File.Rules {
+                        if r.Kind() != actualPyLibraryKind {
+                                continue
+                        }
+                        srcs := r.AttrStrings("srcs")
+                        pySrcs := make([]string, 0, len(srcs))
+                        for _, s := range srcs {
+                                if filepath.Ext(s) == ".py" {
+                                        pySrcs = append(pySrcs, s)
+                                }
+                        }
+                        if len(pySrcs) <= 1 {
+                                continue
+                        }
+                        set := treeset.NewWith(godsutils.StringComparator)
+                        for _, s := range pySrcs {
+                                set.Add(s)
+                                pyLibraryFilenames.Remove(s)
+                        }
+                        existingMultiLibs = append(existingMultiLibs, struct{
+                                name string
+                                srcs *treeset.Set
+                        }{r.Name(), set})
+                }
+        }
+
+        parser := newPython3Parser(args.Config.RepoRoot, args.Rel, cfg.IgnoresDependency)
 	visibility := cfg.Visibility()
 
 	var result language.GenerateResult
@@ -315,22 +346,25 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 			result.Imports = append(result.Imports, pyLibrary.PrivateAttr(config.GazelleImportsKey))
 		}
 	}
-	if cfg.PerFileGeneration() {
-		hasInit, nonEmptyInit := hasLibraryEntrypointFile(args.Dir)
-		pyLibraryFilenames.Each(func(index int, filename interface{}) {
-			pyLibraryTargetName := strings.TrimSuffix(filepath.Base(filename.(string)), ".py")
-			if filename == pyLibraryEntrypointFilename && !nonEmptyInit {
-				return // ignore empty __init__.py.
-			}
-			srcs := treeset.NewWith(godsutils.StringComparator, filename)
-			if cfg.PerFileGenerationIncludeInit() && hasInit && nonEmptyInit {
-				srcs.Add(pyLibraryEntrypointFilename)
-			}
-			appendPyLibrary(srcs, pyLibraryTargetName)
-		})
-	} else {
-		appendPyLibrary(pyLibraryFilenames, cfg.RenderLibraryName(packageName))
-	}
+        if cfg.PerFileGeneration() {
+                hasInit, nonEmptyInit := hasLibraryEntrypointFile(args.Dir)
+                pyLibraryFilenames.Each(func(index int, filename interface{}) {
+                        pyLibraryTargetName := strings.TrimSuffix(filepath.Base(filename.(string)), ".py")
+                        if filename == pyLibraryEntrypointFilename && !nonEmptyInit {
+                                return // ignore empty __init__.py.
+                        }
+                        srcs := treeset.NewWith(godsutils.StringComparator, filename)
+                        if cfg.PerFileGenerationIncludeInit() && hasInit && nonEmptyInit {
+                                srcs.Add(pyLibraryEntrypointFilename)
+                        }
+                        appendPyLibrary(srcs, pyLibraryTargetName)
+                })
+                for _, lib := range existingMultiLibs {
+                        appendPyLibrary(lib.srcs, lib.name)
+                }
+        } else {
+                appendPyLibrary(pyLibraryFilenames, cfg.RenderLibraryName(packageName))
+        }
 
 	if hasPyBinaryEntryPointFile {
 		deps, _, annotations, err := parser.parseSingle(pyBinaryEntrypointFilename)

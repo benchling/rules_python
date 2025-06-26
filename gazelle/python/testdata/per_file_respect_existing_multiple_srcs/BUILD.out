@@ -5,10 +5,13 @@ load("@rules_python//python:defs.bzl", "py_library", "py_test")
 # This target should be maintained by gazelle (but should get a new deps).
 py_library(
     name = "custom",
-    srcs = ["bar.py", "baz.py"],
+    srcs = [
+        "bar.py",
+        "baz.py",
+    ],
+    tags = ["cant_touch_this"],
     visibility = ["//visibility:private"],
     deps = [":foo"],
-	tags = ["cant_touch_this"],
 )
 
 py_library(
