@@ -225,6 +225,37 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 		}
 	}
 
+	existingMultiLibs := []struct {
+		name string
+		srcs *treeset.Set
+	}{}
+	if cfg.PerFileGeneration() && args.File != nil {
+		for _, r := range args.File.Rules {
+			if r.Kind() != actualPyLibraryKind {
+				continue
+			}
+			srcs := r.AttrStrings("srcs")
+			pySrcs := make([]string, 0, len(srcs))
+			for _, s := range srcs {
+				if filepath.Ext(s) == ".py" {
+					pySrcs = append(pySrcs, s)
+				}
+			}
+			if len(pySrcs) <= 1 {
+				continue
+			}
+			set := treeset.NewWith(godsutils.StringComparator)
+			for _, s := range pySrcs {
+				set.Add(s)
+				pyLibraryFilenames.Remove(s)
+			}
+			existingMultiLibs = append(existingMultiLibs, struct {
+				name string
+				srcs *treeset.Set
+			}{r.Name(), set})
+		}
+	}
+
 	parser := newPython3Parser(args.Config.RepoRoot, args.Rel, cfg.IgnoresDependency)
 	visibility := cfg.Visibility()
 
@@ -328,6 +359,9 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 			}
 			appendPyLibrary(srcs, pyLibraryTargetName)
 		})
+		for _, lib := range existingMultiLibs {
+			appendPyLibrary(lib.srcs, lib.name)
+		}
 	} else {
 		appendPyLibrary(pyLibraryFilenames, cfg.RenderLibraryName(packageName))
 	}
