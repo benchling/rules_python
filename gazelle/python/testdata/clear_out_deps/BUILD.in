@@ -1,9 +1,1 @@
-load("@rules_python//python:defs.bzl", "py_library")
-
-py_library(
-    name = "clear_out_deps",
-    srcs = ["__init__.py"],
-    deps = [":removed_a"],
-    visibility = ["//:__subpackages__"],
-    pyi_deps = [":removed_b"],
-)
+# gazelle:python_generate_pyi_deps true
