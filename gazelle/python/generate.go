@@ -310,10 +310,41 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 			result.Imports = append(result.Imports, pyLibrary.PrivateAttr(config.GazelleImportsKey))
 		}
 	}
+
+	ruleBySrcs := make(map[string]string)
+	srcsByRule := make(map[string]*treeset.Set)
+	if args.File != nil {
+		for _, r := range args.File.Rules {
+			kindName := r.Kind()
+			// if kindInfo, ok := args.Config.KindMap[kindName]; ok {
+			// 		kindName = kindInfo.KindName
+			// }
+
+			if kindName == actualPyLibraryKind {
+				srcsList := r.AttrStrings("srcs")
+				for _, src := range srcsList {
+					ruleBySrcs[src] = r.Name()
+					if srcsByRule[r.Name()] == nil {
+						srcsByRule[r.Name()] = treeset.NewWith(godsutils.StringComparator)
+					}
+					srcsByRule[r.Name()].Add(src)
+				}
+			}
+		}
+	}
+
 	if cfg.PerFileGeneration() {
+		// Handle new py_library targets
 		hasInit, nonEmptyInit := hasLibraryEntrypointFile(args.Dir)
 		pyLibraryFilenames.Each(func(index int, filename interface{}) {
-			pyLibraryTargetName := strings.TrimSuffix(filepath.Base(filename.(string)), ".py")
+			var pyLibraryTargetName string
+			if _, ok := ruleBySrcs[filename.(string)]; ok {
+				return
+				// pyLibraryTargetName = strings.TrimSuffix(filepath.Base(filename.(string)), ".py")
+			} else {
+			}
+			pyLibraryTargetName = strings.TrimSuffix(filepath.Base(filename.(string)), ".py")
+
 			if filename == pyLibraryEntrypointFilename && !nonEmptyInit {
 				return // ignore empty __init__.py.
 			}
@@ -323,8 +354,35 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 			}
 			appendPyLibrary(srcs, pyLibraryTargetName)
 		})
+
+		// Handle existing py_library targets
+		for rule := range srcsByRule {
+			srcs := srcsByRule[rule]
+			appendPyLibrary(srcs, rule)
+		}
+
 	} else {
-		appendPyLibrary(pyLibraryFilenames, cfg.RenderLibraryName(packageName))
+
+		// Handle existing py_library targets
+		for rule := range srcsByRule {
+			srcs := srcsByRule[rule]
+			appendPyLibrary(srcs, rule)
+		}
+
+		// Handle remaining files in one py_library target
+		// Create a new set with all the files not yet included in any rule
+		remaining := treeset.NewWith(godsutils.StringComparator)
+		pyLibraryFilenames.Each(func(index int, value interface{}) {
+			filename := value.(string)
+			if _, ok := ruleBySrcs[filename]; !ok {
+				remaining.Add(filename)
+			}
+		})
+
+		if !remaining.Empty() {
+			appendPyLibrary(remaining, cfg.RenderLibraryName(packageName))
+		}
+		// appendPyLibrary(pyLibraryFilenames, cfg.RenderLibraryName(packageName))
 	}
 
 	if hasPyBinaryEntryPointFile {
