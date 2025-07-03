@@ -4,7 +4,6 @@ py_library(
     name = "simple_binary_with_library",
     srcs = [
         "__init__.py",
-        "bar.py",
         "foo.py",
     ],
     visibility = ["//:__subpackages__"],
@@ -16,6 +15,7 @@ py_library(
     srcs = [
         "bar.py",
     ],
+    visibility = ["//:__subpackages__"],
 )
 
 py_binary(
