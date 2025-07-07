@@ -16,3 +16,10 @@ py_library(
     visibility = ["//visibility:private"],
 	tags = ["cant_touch_this"],
 )
+
+
+# This target should be maintained by gazelle (but should get a new deps).
+py_test(
+    name = "foo_test",
+    srcs = ["foo_test.py"],
+)
