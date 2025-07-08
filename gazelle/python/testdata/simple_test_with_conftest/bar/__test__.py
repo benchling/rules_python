@@ -14,7 +14,7 @@
 
 import unittest
 
-from __init__ import bar
+from bar import bar
 
 
 class BarTest(unittest.TestCase):
