@@ -667,16 +667,14 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 	}
 
 	for _, pyTestTarget := range pyTestTargets {
-		if conftest != nil {
-			conftestModule := Module{Name: importSpecFromSrc(pythonProjectRoot, args.Rel, conftestFilename).Imp}
-			if pyTestTarget.annotations.includePytestConftest == nil {
-				// unset; default behavior
-				pyTestTarget.addModuleDependency(conftestModule)
-			} else if *pyTestTarget.annotations.includePytestConftest {
-				// set; add if true, do not add if false
-				pyTestTarget.addModuleDependency(conftestModule)
+		if pyTestTarget.annotations.includePytestConftest == nil || *pyTestTarget.annotations.includePytestConftest {
+			// Add conftest files as module dependencies with proper Python module paths
+			parentConftestModules := findConftestFiles(args.Rel, pythonProjectRoot, args.Config.RepoRoot)
+			for _, module := range parentConftestModules {
+				pyTestTarget.addModuleDependency(module)
 			}
 		}
+
 		pyTest := pyTestTarget.build()
 
 		result.Gen = append(result.Gen, pyTest)
@@ -818,4 +816,51 @@ func generateProtoLibraries(args language.GenerateArgs, cfg *pythonconfig.Config
 		res.Empty = append(res.Empty, emptyRule)
 	}
 
+}
+
+// findConftestFiles finds conftest.py files in parent directories up to and including the python_root.
+// It returns a list of Module objects with Python module paths relative to python_root.
+func findConftestFiles(currentRel string, pythonProjectRoot string, repoRoot string) []Module {
+	var conftestModules []Module
+
+	// Determine the python_root path relative to repo root
+	pythonRootRel := ""
+	if pythonProjectRoot != "" {
+		pythonRootRel = pythonProjectRoot
+	}
+
+	// Start from currentRel
+	current := currentRel
+
+	// Walk up the directory tree until we reach the repo root
+	for {
+		// Check if conftest.py exists in this directory
+		conftestPath := filepath.Join(repoRoot, current, conftestFilename)
+		if _, err := os.Stat(conftestPath); err == nil {
+			// Calculate the Python module path relative to python_root
+			var modulePath string
+			relPath, err := filepath.Rel(pythonRootRel, current)
+			if err != nil || relPath == "." {
+				// If we can't get relative path or it's the python_root itself
+				modulePath = "conftest"
+			} else {
+				modulePath = strings.ReplaceAll(relPath, "/", ".") + ".conftest"
+			}
+
+			module := Module{
+				Name: modulePath,
+			}
+			conftestModules = append(conftestModules, module)
+		}
+
+		// Stop if we've reached the python_root
+		if current == pythonRootRel || current == "." {
+			break
+		}
+
+		// Move to parent directory
+		current = filepath.Dir(current)
+	}
+
+	return conftestModules
 }
