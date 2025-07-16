@@ -178,5 +178,9 @@ func (t *targetBuilder) build() *rule.Rule {
 	}
 	r.SetPrivateAttr(resolvedDepsKey, t.resolvedDeps)
 	r.SetPrivateAttr(depsToRemoveKey, t.depsToRemove)
+	// Store source files for ordering constraints
+	if !t.srcs.Empty() {
+		r.SetPrivateAttr(srcsForOrderingKey, t.srcs)
+	}
 	return r
 }

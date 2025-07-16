@@ -28,5 +28,9 @@ type Python struct {
 // NewLanguage initializes a new Python that satisfies the language.Language
 // interface. This is the entrypoint for the extension initialization.
 func NewLanguage() language.Language {
-	return &Python{}
+	return &Python{
+		Resolver: Resolver{
+			depsOrderResolver: NewDepsOrderResolver(),
+		},
+	}
 }

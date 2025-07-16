@@ -1,0 +1,7 @@
+# Dependency ordering constraints
+# Files listed earlier can be depended upon by files listed later
+# but not vice versa
+
+foundation.py
+middleware.py
+application.py

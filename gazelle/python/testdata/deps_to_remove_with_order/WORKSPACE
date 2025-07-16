@@ -1,0 +1,1 @@
+workspace(name = "deps_to_remove_with_order_test")
