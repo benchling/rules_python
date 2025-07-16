@@ -20,6 +20,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/bazelbuild/bazel-gazelle/config"
@@ -102,31 +103,38 @@ func (d *DepsOrderResolver) LoadDepsOrder(repoRoot string) error {
 	return nil
 }
 
-// GetAverageIndex calculates the average index for a set of source files
-func (d *DepsOrderResolver) GetAverageIndex(srcs []string) float64 {
+// GetMedianIndex calculates the median index for a set of source files
+func (d *DepsOrderResolver) GetMedianIndex(srcs []string) float64 {
 	if len(d.fileToIndex) == 0 {
 		return 0 // No ordering file, return 0
 	}
 
-	totalIndex := 0
-	validSrcs := 0
+	var indices []int
 	for _, src := range srcs {
 		// Try both the full path and just the filename
 		filename := filepath.Base(src)
 		if index, exists := d.fileToIndex[src]; exists {
-			totalIndex += index
-			validSrcs++
+			indices = append(indices, index)
 		} else if index, exists := d.fileToIndex[filename]; exists {
-			totalIndex += index
-			validSrcs++
+			indices = append(indices, index)
 		}
 	}
 
-	if validSrcs == 0 {
+	if len(indices) == 0 {
 		return float64(len(d.fileToIndex)) // Files not in order get max index
 	}
 
-	return float64(totalIndex) / float64(validSrcs)
+	// Sort indices to find median
+	sort.Ints(indices)
+	n := len(indices)
+	
+	if n%2 == 0 {
+		// Even number of elements: average of two middle elements
+		return float64(indices[n/2-1]+indices[n/2]) / 2.0
+	} else {
+		// Odd number of elements: middle element
+		return float64(indices[n/2])
+	}
 }
 
 // ShouldAddToDepsToRemove returns true if the dependency should be added to deps_to_remove based on ordering constraints
@@ -135,11 +143,11 @@ func (d *DepsOrderResolver) ShouldAddToDepsToRemove(currentTargetSrcs []string, 
 		return false // No ordering constraints
 	}
 
-	currentAvg := d.GetAverageIndex(currentTargetSrcs)
-	depAvg := d.GetAverageIndex(depTargetSrcs)
+	currentMedian := d.GetMedianIndex(currentTargetSrcs)
+	depMedian := d.GetMedianIndex(depTargetSrcs)
 
-	// If current target has lower average index than dependency, the dependency should be removed
-	return currentAvg < depAvg
+	// If current target has lower median index than dependency, the dependency should be removed
+	return currentMedian < depMedian
 }
 
 // RegisterImportSources registers the mapping between import specs and their source files
