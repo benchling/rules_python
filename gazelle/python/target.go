@@ -33,6 +33,7 @@ type targetBuilder struct {
 	siblingSrcs       *treeset.Set
 	deps              *treeset.Set
 	resolvedDeps      *treeset.Set
+	depsToRemove      *treeset.Set
 	visibility        *treeset.Set
 	main              *string
 	imports           []string
@@ -50,6 +51,7 @@ func newTargetBuilder(kind, name, pythonProjectRoot, bzlPackage string, siblingS
 		siblingSrcs:       siblingSrcs,
 		deps:              treeset.NewWith(moduleComparator),
 		resolvedDeps:      treeset.NewWith(godsutils.StringComparator),
+		depsToRemove:      treeset.NewWith(godsutils.StringComparator),
 		visibility:        treeset.NewWith(godsutils.StringComparator),
 	}
 }
@@ -96,6 +98,20 @@ func (t *targetBuilder) addResolvedDependency(dep string) *targetBuilder {
 func (t *targetBuilder) addResolvedDependencies(deps []string) *targetBuilder {
 	for _, dep := range deps {
 		t.addResolvedDependency(dep)
+	}
+	return t
+}
+
+// addDepToRemove adds a single dependency to be removed to the target.
+func (t *targetBuilder) addDepToRemove(dep string) *targetBuilder {
+	t.depsToRemove.Add(dep)
+	return t
+}
+
+// addDepsToRemove adds multiple dependencies to be removed to the target.
+func (t *targetBuilder) addDepsToRemove(deps []string) *targetBuilder {
+	for _, dep := range deps {
+		t.addDepToRemove(dep)
 	}
 	return t
 }
@@ -161,5 +177,6 @@ func (t *targetBuilder) build() *rule.Rule {
 		r.SetAttr("testonly", true)
 	}
 	r.SetPrivateAttr(resolvedDepsKey, t.resolvedDeps)
+	r.SetPrivateAttr(depsToRemoveKey, t.depsToRemove)
 	return r
 }

@@ -39,6 +39,8 @@ const (
 	// resolvedDepsKey is the attribute key used to pass dependencies that don't
 	// need to be resolved by the dependency resolver in the Resolver step.
 	resolvedDepsKey = "_gazelle_python_resolved_deps"
+	// depsToRemoveKey is the attribute key used to store the deps_to_remove list
+	depsToRemoveKey = "_gazelle_python_deps_to_remove"
 )
 
 // Resolver satisfies the resolve.Resolver interface. It resolves dependencies
@@ -356,6 +358,7 @@ func (py *Resolver) Resolve(
 	if cfg.GeneratePyiDeps() {
 		if !deps.Empty() {
 			r.SetAttr("deps", convertDependencySetToExpr(deps))
+			r.SetAttr("deps_to_remove", convertDependencySetToExpr(deps))
 		}
 		if !pyiDeps.Empty() {
 			r.SetAttr("pyi_deps", convertDependencySetToExpr(pyiDeps))
@@ -368,6 +371,7 @@ func (py *Resolver) Resolve(
 
 		if !combinedDeps.Empty() {
 			r.SetAttr("deps", convertDependencySetToExpr(combinedDeps))
+			r.SetAttr("deps_to_remove", convertDependencySetToExpr(combinedDeps))
 		}
 	}
 }
