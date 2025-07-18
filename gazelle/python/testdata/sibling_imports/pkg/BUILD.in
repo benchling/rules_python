@@ -1,1 +1,1 @@
-# gazelle:python_resolve_sibling_imports enabled
+# gazelle:python_resolve_sibling_imports true

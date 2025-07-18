@@ -1,6 +1,6 @@
 load("@rules_python//python:defs.bzl", "py_library", "py_test")
 
-# gazelle:python_resolve_sibling_imports enabled
+# gazelle:python_resolve_sibling_imports true
 
 py_library(
     name = "pkg",
