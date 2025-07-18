@@ -1,0 +1,35 @@
+load("@rules_python//python:defs.bzl", "py_library")
+
+# gazelle:python_generation_mode file
+
+py_library(
+    name = "__init__",
+    srcs = ["__init__.py"],
+    visibility = ["//:__subpackages__"],
+)
+
+py_library(
+    name = "application",
+    srcs = ["application.py"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":foundation",
+        ":middleware",
+    ],
+)
+
+py_library(
+    name = "foundation",
+    srcs = ["foundation.py"],
+    deps_to_remove = [":middleware"],
+    visibility = ["//:__subpackages__"],
+    deps = [":middleware"],
+)
+
+py_library(
+    name = "middleware",
+    srcs = ["middleware.py"],
+    deps_to_remove = [":application"],
+    visibility = ["//:__subpackages__"],
+    deps = [":application"],
+)

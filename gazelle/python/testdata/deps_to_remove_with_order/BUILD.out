@@ -1,0 +1,32 @@
+load("@rules_python//python:defs.bzl", "py_library")
+
+# gazelle:python_generation_mode file
+
+py_library(
+    name = "__init__",
+    srcs = ["__init__.py"],
+    visibility = ["//:__subpackages__"],
+)
+
+py_library(
+    name = "core",
+    srcs = ["core.py"],
+    visibility = ["//:__subpackages__"],
+)
+
+py_library(
+    name = "high_level",
+    srcs = ["high_level.py"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":core",
+        ":utils",
+    ],
+)
+
+py_library(
+    name = "utils",
+    srcs = ["utils.py"],
+    visibility = ["//:__subpackages__"],
+    deps = [":core"],
+)

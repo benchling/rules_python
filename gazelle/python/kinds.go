@@ -60,10 +60,12 @@ var pyKinds = map[string]rule.KindInfo{
 		SubstituteAttrs: map[string]bool{},
 		MergeableAttrs: map[string]bool{
 			"srcs": true,
+			"deps_to_remove": true,
 		},
 		ResolveAttrs: map[string]bool{
 			"deps": true,
 			"pyi_deps": true,
+			"deps_to_remove": true,
 		},
 	},
 	pyTestKind: {
