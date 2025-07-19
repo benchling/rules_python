@@ -102,9 +102,9 @@ const (
 	// python_generate_proto targets.
 	GenerateProto = "python_generate_proto"
 	// PythonResolveSiblingImports represents the directive that controls whether
-	// sibling imports are resolved to absolute imports. When enabled, imports like
-	// "import a" from a sibling module are converted to absolute imports. When
-	// disabled, they remain as relative imports to the current package.
+	// absolute imports can be solved to sibling modules. When enabled, imports
+	// like "import a" can be resolved to sibling modules. When disabled, they
+	// can only be resolved as an absolute import.
 	PythonResolveSiblingImports = "python_resolve_sibling_imports"
 )
 
@@ -579,12 +579,12 @@ func (c *Config) GenerateProto() bool {
 	return c.generateProto
 }
 
-// SetResolveSiblingImports sets whether sibling imports are resolved to absolute imports.
+// SetResolveSiblingImports sets whether absolute imports can be resolved to sibling modules.
 func (c *Config) SetResolveSiblingImports(resolveSiblingImports bool) {
 	c.resolveSiblingImports = resolveSiblingImports
 }
 
-// ResolveSiblingImports returns whether sibling imports are resolved to absolute imports.
+// ResolveSiblingImports returns whether absolute imports can be resolved to sibling modules.
 func (c *Config) ResolveSiblingImports() bool {
 	return c.resolveSiblingImports
 }
