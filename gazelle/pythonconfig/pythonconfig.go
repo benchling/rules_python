@@ -243,7 +243,7 @@ func New(
 		experimentalAllowRelativeImports:          false,
 		generatePyiDeps:                           false,
 		generateProto:                             false,
-		resolveSiblingImports:                     true,
+		resolveSiblingImports:                     false,
 	}
 }
 

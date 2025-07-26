@@ -95,6 +95,10 @@ END_UNRELEASED_TEMPLATE
   ([#2921](https://github.com/bazel-contrib/rules_python/issues/2921)).
 * (repl) Normalize the path for the `REPL` stub to make it possible to use the
   default stub template from outside `rules_python` ({gh-issue}`3101`).
+* (gazelle) Fixes gazelle adding sibling module dependencies to resolve
+  absolute imports (Python 2's behavior without `absolute_import`). Previous
+  behavior can be restored using the directive
+  `# gazelle:python_resolve_sibling_imports true`
 
 {#v0-0-0-added}
 ### Added
@@ -122,10 +126,6 @@ END_UNRELEASED_TEMPLATE
   Gazelle generates `py_proto_library` rules for `proto_library`. `false` by default.
 * (gazelle) New directive `gazelle:python_proto_naming_convention`; controls
   naming of `py_proto_library` rules.
-* (gazelle) Added directive `# gazelle:python_resolve_sibling_imports` (default
-  `enabled` for backwards-compatibility). When enabled, gazelle will allow absolute
-  imports to be resolved to sibling modules (Python 2's behavior without
-  `absolute_import`).
 
 {#v0-0-0-removed}
 ### Removed
