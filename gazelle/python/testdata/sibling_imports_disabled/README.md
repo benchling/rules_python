@@ -2,10 +2,15 @@
 
 This test case asserts that imports from sibling modules are NOT resolved as
 absolute imports when the `python_resolve_sibling_imports` directive is
-disabled. It covers 3 different types of imports in `pkg/unit_test.py`:
+disabled. It covers different types of imports in `pkg/unit_test.py`:
 
 - `import a` - resolves to the root-level `a.py` instead of the sibling
   `pkg/a.py`
+- `from typing import Iterable` - resolves to the stdlib `typing` module
+  (not the sibling `typing.py`).
+- `from .b import run` / `from .typing import A` - resolves to the sibling
+  `pkg/b.py` / `pkg/typing.py` (with
+  `gazelle:experimental_allow_relative_imports` enabled)
 - `import test_util` - resolves to the root-level `test_util.py` instead of
   the sibling `pkg/test_util.py`
 - `from b import run` - resolves to the root-level `b.py` instead of the
