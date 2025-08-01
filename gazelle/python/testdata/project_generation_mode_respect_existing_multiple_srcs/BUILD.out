@@ -1,0 +1,37 @@
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
+
+# gazelle:python_generation_mode project
+
+# This target should be maintained and unchangedby gazelle
+py_library(
+    name = "__init__",
+    srcs = ["__init__.py"],
+    visibility = ["//visibility:private"],
+)
+
+# This target should be maintained by gazelle (but should get a new deps).
+py_library(
+    name = "custom",
+    srcs = [
+        "bar.py",
+        "baz.py",
+    ],
+    tags = ["cant_touch_this"],
+    visibility = ["//visibility:private"],
+    deps = [":project_generation_mode_respect_existing_multiple_srcs"],
+)
+
+py_library(
+    name = "project_generation_mode_respect_existing_multiple_srcs",
+    srcs = ["foo.py"],
+    visibility = ["//:__subpackages__"],
+)
+
+py_test(
+    name = "project_generation_mode_respect_existing_multiple_srcs_test",
+    srcs = [
+        "bar_test.py",
+        "foo_test.py",
+    ],
+    deps = [":custom"],
+)
