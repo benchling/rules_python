@@ -13,6 +13,6 @@
 # limitations under the License.
 
 import foo.baz.baz as baz
-import three
+import one.two.three
 
 _ = baz
