@@ -1,0 +1,11 @@
+load("@rules_python//python:defs.bzl", "py_library")
+
+# gazelle:python_generation_mode file
+
+# This target should be maintained by gazelle (but should get a new deps).
+py_library(
+    name = "custom",
+    srcs = ["bar.py", "baz.py"],
+    visibility = ["//visibility:private"],
+	tags = ["cant_touch_this"],
+)
