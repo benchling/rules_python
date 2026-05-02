@@ -1,0 +1,26 @@
+load("@rules_python//python:defs.bzl", "py_library")
+
+# gazelle:python_generation_mode project
+
+# This target already matches the generated project package and should remain
+# unchanged.
+py_library(
+    name = "__init__",
+    srcs = ["__init__.py"],
+    visibility = ["//visibility:private"],
+)
+
+# Gazelle should preserve this custom source group and prune missing sources.
+py_library(
+    name = "custom",
+    srcs = ["bar.py", "baz.py", "removed.py"],
+    visibility = ["//visibility:private"],
+	tags = ["cant_touch_this"],
+)
+
+
+# Gazelle should preserve this custom test target and add generated deps.
+py_test(
+    name = "foo_test",
+    srcs = ["foo_test.py"],
+)
