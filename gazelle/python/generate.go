@@ -399,9 +399,6 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 		// If we're doing per-file generation, srcs could be empty at this point, meaning we shouldn't make a py_library.
 		// If there is already a package named py_library target before, we should generate an empty py_library.
 		if srcs.Empty() {
-			if !cfg.PerFileGeneration() {
-				return
-			}
 			if args.File == nil {
 				return
 			}
