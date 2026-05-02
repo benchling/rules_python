@@ -9,7 +9,7 @@ py_library(
     visibility = ["//:__subpackages__"],
 )
 
-# This target should be kept unmodified by Gazelle.
+# This custom target should be preserved while Gazelle adds generated attributes.
 py_library(
     name = "custom",
     srcs = [
