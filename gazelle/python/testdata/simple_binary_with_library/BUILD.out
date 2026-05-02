@@ -10,12 +10,13 @@ py_library(
     visibility = ["//:__subpackages__"],
 )
 
-# This target should be kept unmodified by Gazelle.
+# Gazelle should preserve this custom target and keep bar.py in both libraries.
 py_library(
     name = "custom",
     srcs = [
         "bar.py",
     ],
+    visibility = ["//:__subpackages__"],
 )
 
 py_binary(
