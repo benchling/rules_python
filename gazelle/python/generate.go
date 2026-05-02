@@ -48,6 +48,12 @@ var (
 	buildFilenames = []string{"BUILD", "BUILD.bazel"}
 )
 
+type existingPythonSourceRule struct {
+	kind string
+	name string
+	srcs *treeset.Set
+}
+
 // Returns the mapped kind, or kind if no mapping is configured with the map_kind directive.
 func getMappedKind(c *config.Config, kind string) string {
 	if mapped, ok := c.KindMap[kind]; ok {
@@ -68,6 +74,93 @@ func matchesAnyGlob(s string, globs []string) bool {
 	// invalid, it's considered a non-match and we move on to the next pattern.
 	for _, g := range globs {
 		if ok, _ := doublestar.Match(g, s); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func isTargetSrc(src string) bool {
+	return strings.HasPrefix(src, "@") || strings.HasPrefix(src, "//") || strings.HasPrefix(src, ":")
+}
+
+func collectExistingPythonSourceRules(c *config.Config, file *rule.File, kind string, knownSrcs map[string]struct{}) []existingPythonSourceRule {
+	if file == nil {
+		return nil
+	}
+
+	var sourceRules []existingPythonSourceRule
+	for _, existingRule := range file.Rules {
+		if !kindMatches(c, existingRule, kind) {
+			continue
+		}
+
+		srcs := existingRule.AttrStrings("srcs")
+		if len(srcs) == 0 {
+			continue
+		}
+
+		validSrcs := treeset.NewWith(godsutils.StringComparator)
+		skip := false
+		for _, src := range srcs {
+			if isTargetSrc(src) || filepath.Ext(src) != ".py" {
+				skip = true
+				break
+			}
+			if _, ok := knownSrcs[src]; ok {
+				validSrcs.Add(src)
+			}
+		}
+		if skip {
+			continue
+		}
+		if validSrcs.Empty() {
+			continue
+		}
+
+		sourceRules = append(sourceRules, existingPythonSourceRule{
+			kind: kind,
+			name: existingRule.Name(),
+			srcs: validSrcs,
+		})
+	}
+	return sourceRules
+}
+
+func addSetValuesToMap(srcs *treeset.Set, dst map[string]struct{}) {
+	it := srcs.Iterator()
+	for it.Next() {
+		dst[it.Value().(string)] = struct{}{}
+	}
+}
+
+func removeClaimedSrcs(rules []existingPythonSourceRule, srcSets ...*treeset.Set) {
+	for _, sourceRule := range rules {
+		it := sourceRule.srcs.Iterator()
+		for it.Next() {
+			src := it.Value().(string)
+			for _, srcSet := range srcSets {
+				srcSet.Remove(src)
+			}
+		}
+	}
+}
+
+func filterExistingPythonSourceRules(rules []existingPythonSourceRule, shouldKeep func(existingPythonSourceRule) bool) []existingPythonSourceRule {
+	filtered := make([]existingPythonSourceRule, 0, len(rules))
+	for _, sourceRule := range rules {
+		if shouldKeep(sourceRule) {
+			filtered = append(filtered, sourceRule)
+		}
+	}
+	return filtered
+}
+
+func sourceRuleMatchesGeneratedPerFileName(sourceRule existingPythonSourceRule) bool {
+	it := sourceRule.srcs.Iterator()
+	for it.Next() {
+		src := it.Value().(string)
+		if sourceRule.name == strings.TrimSuffix(filepath.Base(src), ".py") {
 			return true
 		}
 	}
@@ -271,6 +364,51 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 		autoIncludeInit = cfg.PerFileGenerationIncludeInit() && hasInit && hasPopulatedInit
 	}
 
+	knownPySrcs := make(map[string]struct{})
+	addSetValuesToMap(pyLibraryFilenames, knownPySrcs)
+	addSetValuesToMap(pyTestFilenames, knownPySrcs)
+	for _, src := range []struct {
+		name    string
+		present bool
+	}{
+		{pyBinaryEntrypointFilename, hasPyBinaryEntryPointFile},
+		{pyTestEntrypointFilename, hasPyTestEntryPointFile},
+		{conftestFilename, hasConftestFile},
+	} {
+		if src.present {
+			knownPySrcs[src.name] = struct{}{}
+		}
+	}
+
+	existingPyLibraries := collectExistingPythonSourceRules(args.Config, args.File, pyLibraryKind, knownPySrcs)
+	existingPyTests := collectExistingPythonSourceRules(args.Config, args.File, pyTestKind, knownPySrcs)
+	existingPyLibraries = filterExistingPythonSourceRules(
+		existingPyLibraries,
+		func(sourceRule existingPythonSourceRule) bool {
+			if !cfg.PerFileGeneration() {
+				return sourceRule.name != cfg.RenderLibraryName(packageName)
+			}
+			return !sourceRuleMatchesGeneratedPerFileName(sourceRule)
+		},
+	)
+	existingPyTests = filterExistingPythonSourceRules(
+		existingPyTests,
+		func(sourceRule existingPythonSourceRule) bool {
+			if !cfg.PerFileGeneration() {
+				return sourceRule.name != cfg.RenderTestName(packageName)
+			}
+			return !sourceRuleMatchesGeneratedPerFileName(sourceRule)
+		},
+	)
+	claimingPyLibraries := filterExistingPythonSourceRules(
+		existingPyLibraries,
+		func(sourceRule existingPythonSourceRule) bool {
+			return sourceRule.srcs.Size() > 1 || cfg.CoarseGrainedGeneration()
+		},
+	)
+	removeClaimedSrcs(claimingPyLibraries, pyLibraryFilenames, pyTestFilenames)
+	removeClaimedSrcs(existingPyTests, pyLibraryFilenames, pyTestFilenames)
+
 	appendPyLibrary := func(srcs *treeset.Set, pyLibraryTargetName string) {
 		allDeps, mainModules, annotations, err := parser.parse(srcs)
 		for name := range mainModules {
@@ -378,6 +516,10 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 			result.Gen = append(result.Gen, pyLibrary)
 			result.Imports = append(result.Imports, pyLibrary.PrivateAttr(config.GazelleImportsKey))
 		}
+	}
+
+	for _, existingPyLibrary := range existingPyLibraries {
+		appendPyLibrary(existingPyLibrary.srcs, existingPyLibrary.name)
 	}
 
 	if cfg.PerFileGeneration() {
@@ -503,6 +645,15 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 			setAnnotations(*annotations).
 			generateImportsAttribute()
 	}
+
+	for _, existingPyTest := range existingPyTests {
+		if existingPyTest.srcs.Empty() {
+			result.Empty = append(result.Empty, rule.NewRule(existingPyTest.kind, existingPyTest.name))
+			continue
+		}
+		pyTestTargets = append(pyTestTargets, newPyTestTargetBuilder(existingPyTest.srcs, existingPyTest.name))
+	}
+
 	if (!cfg.PerPackageGenerationRequireTestEntryPoint() || hasPyTestEntryPointFile || hasPyTestEntryPointTarget || cfg.CoarseGrainedGeneration()) && !cfg.PerFileGeneration() {
 		// Create one py_test target per package
 		if hasPyTestEntryPointFile {
@@ -593,16 +744,13 @@ func (py *Python) getRulesWithInvalidSrcs(args language.GenerateArgs, validFiles
 		validFilesMap[file] = struct{}{}
 	}
 
-	isTarget := func(src string) bool {
-		return strings.HasPrefix(src, "@") || strings.HasPrefix(src, "//") || strings.HasPrefix(src, ":")
-	}
 	for _, existingRule := range args.File.Rules {
 		if !kindMatches(args.Config, existingRule, pyBinaryKind) {
 			continue
 		}
 		var hasValidSrcs bool
 		for _, src := range existingRule.AttrStrings("srcs") {
-			if isTarget(src) {
+			if isTargetSrc(src) {
 				hasValidSrcs = true
 				break
 			}
