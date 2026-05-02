@@ -1,0 +1,12 @@
+load("@rules_python//python:defs.bzl", "py_library")
+
+# gazelle:python_generation_mode file
+
+# Gazelle should preserve this custom source group and prune missing sources.
+# Unclaimed sources should still get generated per-file targets.
+py_library(
+    name = "custom",
+    srcs = ["bar.py", "baz.py", "removed.py"],
+    visibility = ["//visibility:private"],
+	tags = ["cant_touch_this"],
+)

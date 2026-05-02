@@ -1,0 +1,26 @@
+load("@rules_python//python:defs.bzl", "py_binary", "py_library")
+
+# gazelle:python_generation_mode file
+
+# Gazelle should extract bar.py into a py_binary because it has a main module.
+# The preserved library should keep only its remaining valid sources.
+py_library(
+    name = "custom",
+    srcs = ["baz.py"],
+    tags = ["keep_me"],
+    visibility = ["//visibility:private"],
+    deps = [":foo"],
+)
+
+py_binary(
+    name = "bar",
+    srcs = ["bar.py"],
+    visibility = ["//:__subpackages__"],
+    deps = [":foo"],
+)
+
+py_library(
+    name = "foo",
+    srcs = ["foo.py"],
+    visibility = ["//:__subpackages__"],
+)
