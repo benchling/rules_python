@@ -1,0 +1,10 @@
+load("@rules_python//python:defs.bzl", "py_library")
+
+# Gazelle should preserve this custom target. Because it has a single source,
+# cli.py stays in the generated package target too, but only one py_binary
+# should be generated for it.
+py_library(
+    name = "custom",
+    srcs = ["cli.py"],
+    tags = ["keep_me"],
+)

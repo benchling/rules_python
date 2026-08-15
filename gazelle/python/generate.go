@@ -84,14 +84,36 @@ func isTargetSrc(src string) bool {
 	return strings.HasPrefix(src, "@") || strings.HasPrefix(src, "//") || strings.HasPrefix(src, ":")
 }
 
-func collectExistingPythonSourceRules(c *config.Config, file *rule.File, kind string, knownSrcs map[string]struct{}) []existingPythonSourceRule {
-	if file == nil {
+// collectExistingPythonSourceRules returns the rules of the canonical kind
+// `kind` that Gazelle should regenerate in place rather than replace. knownSrcs
+// holds the source files Gazelle would itself put in a generated target's srcs.
+//
+// A rule is only adopted if at least one of its srcs is in knownSrcs; a rule
+// built entirely from sources Gazelle was told to leave alone is left alone too.
+// Once adopted, srcs that exist but are absent from knownSrcs are still kept:
+// python_ignore_files, gazelle:exclude and subdirectory sources are hidden from
+// generation, which must not cause Gazelle to delete them from a hand-written
+// target. Only srcs that no longer exist are pruned.
+func collectExistingPythonSourceRules(args language.GenerateArgs, kind string, knownSrcs map[string]struct{}) []existingPythonSourceRule {
+	if args.File == nil {
 		return nil
 	}
 
+	genFiles := make(map[string]struct{}, len(args.GenFiles))
+	for _, f := range args.GenFiles {
+		genFiles[f] = struct{}{}
+	}
+	srcExists := func(src string) bool {
+		if _, ok := genFiles[src]; ok {
+			return true
+		}
+		_, err := os.Stat(filepath.Join(args.Dir, src))
+		return err == nil
+	}
+
 	var sourceRules []existingPythonSourceRule
-	for _, existingRule := range file.Rules {
-		if !kindMatches(c, existingRule, kind) {
+	for _, existingRule := range args.File.Rules {
+		if !kindMatches(args.Config, existingRule, kind) {
 			continue
 		}
 
@@ -102,19 +124,23 @@ func collectExistingPythonSourceRules(c *config.Config, file *rule.File, kind st
 
 		validSrcs := treeset.NewWith(godsutils.StringComparator)
 		skip := false
+		hasKnownSrc := false
 		for _, src := range srcs {
 			if isTargetSrc(src) || filepath.Ext(src) != ".py" {
 				skip = true
 				break
 			}
 			if _, ok := knownSrcs[src]; ok {
+				hasKnownSrc = true
+				validSrcs.Add(src)
+			} else if srcExists(src) {
 				validSrcs.Add(src)
 			}
 		}
 		if skip {
 			continue
 		}
-		if validSrcs.Empty() {
+		if !hasKnownSrc {
 			continue
 		}
 
@@ -364,6 +390,12 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 		autoIncludeInit = cfg.PerFileGenerationIncludeInit() && hasInit && hasPopulatedInit
 	}
 
+	// knownPySrcs is the set of source files Gazelle manages in this package, i.e.
+	// the ones it would put in a generated target's srcs. It is narrower than "the
+	// .py files that exist here": files hidden by python_ignore_files or
+	// gazelle:exclude, and subdirectory files in per-package mode, are absent.
+	// The entrypoints and conftest.py are diverted out of pyLibraryFilenames and
+	// pyTestFilenames by the scan above, so they are added back explicitly.
 	knownPySrcs := make(map[string]struct{})
 	addSetValuesToMap(pyLibraryFilenames, knownPySrcs)
 	addSetValuesToMap(pyTestFilenames, knownPySrcs)
@@ -380,8 +412,8 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 		}
 	}
 
-	existingPyLibraries := collectExistingPythonSourceRules(args.Config, args.File, pyLibraryKind, knownPySrcs)
-	existingPyTests := collectExistingPythonSourceRules(args.Config, args.File, pyTestKind, knownPySrcs)
+	existingPyLibraries := collectExistingPythonSourceRules(args, pyLibraryKind, knownPySrcs)
+	existingPyTests := collectExistingPythonSourceRules(args, pyTestKind, knownPySrcs)
 	existingPyLibraries = filterExistingPythonSourceRules(
 		existingPyLibraries,
 		func(sourceRule existingPythonSourceRule) bool {
@@ -409,7 +441,16 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 	removeClaimedSrcs(claimingPyLibraries, pyLibraryFilenames, pyTestFilenames)
 	removeClaimedSrcs(existingPyTests, pyLibraryFilenames, pyTestFilenames)
 
-	appendPyLibrary := func(srcs *treeset.Set, pyLibraryTargetName string) {
+	// extractedMainModules tracks the main modules that already have a generated
+	// py_binary target. A source file can be owned by both a preserved target and
+	// a generated one, in which case appendPyLibrary sees it twice and would
+	// otherwise emit a duplicate py_binary for it.
+	extractedMainModules := make(map[string]struct{})
+
+	// autoIncludedInit reports whether the caller added pyLibraryEntrypointFilename
+	// to srcs itself, rather than it being a source the user listed by hand. Only
+	// in the former case may it be removed again when a main module is extracted.
+	appendPyLibrary := func(srcs *treeset.Set, pyLibraryTargetName string, autoIncludedInit bool) {
 		allDeps, mainModules, annotations, err := parser.parse(srcs)
 		for name := range mainModules {
 			validFilesMap[name] = struct{}{}
@@ -429,7 +470,7 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 				if cfg.PerFileGeneration() {
 					srcs.Remove(name)
 					// Also remove the __init__.py that was added earlier.
-					if autoIncludeInit {
+					if autoIncludedInit {
 						srcs.Remove(pyLibraryEntrypointFilename)
 					}
 				}
@@ -437,6 +478,11 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 
 			sort.Strings(mainFileNames)
 			for _, filename := range mainFileNames {
+				if _, ok := extractedMainModules[filename]; ok {
+					continue
+				}
+				extractedMainModules[filename] = struct{}{}
+
 				pyBinaryTargetName := strings.TrimSuffix(filepath.Base(filename), ".py")
 				if err := ensureNoCollision(args.Config, args.File, pyBinaryTargetName, pyBinaryKind); err != nil {
 					fqTarget := label.New("", args.Rel, pyBinaryTargetName)
@@ -519,7 +565,7 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 	}
 
 	for _, existingPyLibrary := range existingPyLibraries {
-		appendPyLibrary(existingPyLibrary.srcs, existingPyLibrary.name)
+		appendPyLibrary(existingPyLibrary.srcs, existingPyLibrary.name, false)
 	}
 
 	if cfg.PerFileGeneration() {
@@ -532,10 +578,10 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 			if autoIncludeInit {
 				srcs.Add(pyLibraryEntrypointFilename)
 			}
-			appendPyLibrary(srcs, pyLibraryTargetName)
+			appendPyLibrary(srcs, pyLibraryTargetName, autoIncludeInit)
 		})
 	} else {
-		appendPyLibrary(pyLibraryFilenames, cfg.RenderLibraryName(packageName))
+		appendPyLibrary(pyLibraryFilenames, cfg.RenderLibraryName(packageName), false)
 	}
 
 	if hasPyBinaryEntryPointFile {
