@@ -2,8 +2,9 @@ load("@rules_python//python:defs.bzl", "py_library")
 
 # gazelle:python_generation_mode project
 
-# This target already matches the generated project package and should remain
-# unchanged.
+# In project mode a preserved target claims its sources even when it has only
+# one, so __init__.py is left out of the generated project library below.
+# Regenerating this target yields identical content, so it appears unchanged.
 py_library(
     name = "__init__",
     srcs = ["__init__.py"],
