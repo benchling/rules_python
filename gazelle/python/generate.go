@@ -49,7 +49,6 @@ var (
 )
 
 type existingPythonSourceRule struct {
-	kind string
 	name string
 	srcs *treeset.Set
 }
@@ -145,7 +144,6 @@ func collectExistingPythonSourceRules(args language.GenerateArgs, kind string, k
 		}
 
 		sourceRules = append(sourceRules, existingPythonSourceRule{
-			kind: kind,
 			name: existingRule.Name(),
 			srcs: validSrcs,
 		})
@@ -693,10 +691,6 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 	}
 
 	for _, existingPyTest := range existingPyTests {
-		if existingPyTest.srcs.Empty() {
-			result.Empty = append(result.Empty, rule.NewRule(existingPyTest.kind, existingPyTest.name))
-			continue
-		}
 		pyTestTargets = append(pyTestTargets, newPyTestTargetBuilder(existingPyTest.srcs, existingPyTest.name))
 	}
 
