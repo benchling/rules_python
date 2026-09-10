@@ -161,8 +161,8 @@ you edit Python code, and it should update your `BUILD` files correctly.
 ### Libraries
 
 Python source files are those ending in `.py` that are not matched as a test
-file via the {term}`# gazelle:python_test_file_pattern value` directive. By default,
-python source files are all `*.py` files except for `*_test.py` and
+file via the {term}`# gazelle:python_test_file_pattern value` directive. By
+default, python source files are all `*.py` files except for `*_test.py` and
 `test_*.py`.
 
 First, we look for the nearest ancestor `BUILD(.bazel)` file starting from
@@ -170,8 +170,9 @@ the folder containing the Python source file.
 
 + In `package` generation mode, if there is no {bzl:obj}`py_library` in this
   `BUILD(.bazel)` file, one is created using the package name as the target's
-  name. This makes it the default target in the package. Next, all source
-  files are collected into the `srcs` of the {bzl:obj}`py_library`.
+  name. This makes it the default target in the package. Next, source files not
+  claimed by another target are collected into the `srcs` of the
+  {bzl:obj}`py_library`.
 + In `project` generation mode, all source files in subdirectories (that don't
   have `BUILD(.bazel)` files) are also collected.
 + In `file` generation mode, each python source file is given its own target.
@@ -204,6 +205,41 @@ py_test(
 
 You can control the naming convention for test targets using the
 {term}`# gazelle:python_test_naming_convention value` directive.
+
+### Existing source targets
+
+Gazelle regenerates eligible hand-written {bzl:obj}`py_library` and
+{bzl:obj}`py_test` targets in place. A target is eligible when its `srcs` is a
+non-empty list of relative `.py` paths and at least one of those paths is a
+source Gazelle manages. Targets are excluded from this behavior when:
+
+- Their name is one Gazelle will generate.
+- Their `srcs` attribute uses `glob()`, a label, or a non-`.py` file.
+- Their `srcs` contains `__main__.py`, `__test__.py`, or `conftest.py`, which
+  Gazelle handles with dedicated targets.
+
+For an eligible target, Gazelle updates `srcs` and the dependency attributes
+`deps`, `pyi_deps`, and `pyi_srcs`. It may add `imports` when required by the
+configured Python root. Other attributes, including `visibility` and `tags`,
+remain unchanged. A `# keep` comment on a value prevents Gazelle from removing
+that value. A `# keep` comment above the rule prevents Gazelle from changing the
+rule at all.
+
+An eligible {bzl:obj}`py_test` always claims its sources, which keeps those
+sources out of generated test and library targets. A {bzl:obj}`py_library` with
+more than one declared source also claims its sources. A library with one
+declared source continues to share it with the generated library, except in
+`project` generation mode, where it claims the source.
+
+After sources are divided between preserved and generated targets, imports can
+produce dependencies in both directions and therefore a Bazel dependency cycle.
+If this happens, reorganize the sources or use `# keep` above the existing rule
+to opt it out of preservation.
+
+:::{versionchanged} VERSION_NEXT_FEATURE
+Eligible existing {bzl:obj}`py_library` and {bzl:obj}`py_test` targets are now
+regenerated in place.
+:::
 
 
 ### Binaries

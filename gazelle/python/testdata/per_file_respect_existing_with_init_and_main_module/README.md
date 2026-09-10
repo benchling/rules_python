@@ -8,6 +8,6 @@ to the per-file targets it generates. It must not remove `__init__.py` from a
 preserved target that listed it explicitly, which would empty the target's srcs
 and delete it.
 
-The preserved target keeps a dependency on `:foo` even though `__init__.py` does
-not import it: dependencies are resolved from the target's sources before the
-main module is extracted, so `cli.py`'s imports are still attributed to it.
+The preserved target gets no dependency on `:foo`: `cli.py` imports `foo`, but
+dependencies are recomputed after the main module is extracted, so an import
+from a source the target no longer owns does not survive in its `deps`.

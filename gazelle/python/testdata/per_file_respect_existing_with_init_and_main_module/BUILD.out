@@ -9,8 +9,6 @@ py_library(
     name = "custom",
     srcs = ["__init__.py"],
     tags = ["keep_me"],
-    visibility = ["//:__subpackages__"],
-    deps = [":foo"],
 )
 
 py_binary(

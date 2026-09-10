@@ -1,0 +1,13 @@
+load("@rules_python//python:defs.bzl", "py_library")
+
+# Gazelle should leave this target alone: it lists sources that always get their
+# own generated targets.
+py_library(
+    name = "custom",
+    srcs = [
+        "__main__.py",
+        "bar.py",
+        "conftest.py",
+    ],
+    tags = ["keep_me"],
+)

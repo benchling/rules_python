@@ -1,0 +1,12 @@
+load("@rules_python//python:defs.bzl", "py_library")
+
+# Two sources are declared, so this target claims bar.py even though removed.py
+# no longer exists.
+py_library(
+    name = "custom",
+    srcs = [
+        "bar.py",
+        "removed.py",
+    ],
+    tags = ["keep_me"],
+)

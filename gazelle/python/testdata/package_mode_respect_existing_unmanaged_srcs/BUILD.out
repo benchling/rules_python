@@ -13,7 +13,6 @@ py_library(
         "ignored.py",
     ],
     tags = ["keep_me"],
-    visibility = ["//:__subpackages__"],
 )
 
 py_library(

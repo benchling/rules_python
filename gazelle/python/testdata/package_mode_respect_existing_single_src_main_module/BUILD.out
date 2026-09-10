@@ -7,7 +7,6 @@ py_library(
     name = "custom",
     srcs = ["cli.py"],
     tags = ["keep_me"],
-    visibility = ["//:__subpackages__"],
     deps = [":package_mode_respect_existing_single_src_main_module"],
 )
 
