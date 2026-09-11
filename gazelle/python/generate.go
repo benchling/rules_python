@@ -310,6 +310,55 @@ func adoptExcludedInitOnlyPackageLibraryForSplitLayout(
 	return rules
 }
 
+// adoptEmptyAggregatePackageLibraryForSplitLayout appends the hand-written
+// package library when it omits srcs entirely. That target is otherwise not
+// adopted because collectExistingPythonSourceRules ignores rules without srcs,
+// but it is still the deps-only package aggregate in a split layout and must
+// be preserved so Gazelle does not emit a competing package-level library.
+// Only applies when every other adopted library is a single-module target.
+func adoptEmptyAggregatePackageLibraryForSplitLayout(
+	args language.GenerateArgs,
+	kind string,
+	packageLibraryName string,
+	rules []existingPythonSourceRule,
+) []existingPythonSourceRule {
+	if args.File == nil || len(rules) == 0 {
+		return rules
+	}
+	for _, sourceRule := range rules {
+		if sourceRule.name == packageLibraryName {
+			return rules
+		}
+	}
+	for _, other := range rules {
+		if other.declaredSrcCount != 1 {
+			return rules
+		}
+	}
+
+	for _, existingRule := range args.File.Rules {
+		if existingRule.Name() != packageLibraryName || !kindMatches(args.Config, existingRule, kind) {
+			continue
+		}
+		if len(existingRule.AttrStrings("srcs")) != 0 {
+			return rules
+		}
+
+		candidate := existingPythonSourceRule{
+			name:             packageLibraryName,
+			srcs:             treeset.NewWith(godsutils.StringComparator),
+			declaredSrcCount: 0,
+		}
+		for _, other := range rules {
+			if existingRulesShareSrcs(candidate, other) {
+				return rules
+			}
+		}
+		return append(rules, candidate)
+	}
+	return rules
+}
+
 // addTargetNamesForSrcs records the per-file target name Gazelle derives from
 // each of srcs.
 func addTargetNamesForSrcs(srcs *treeset.Set, dst map[string]struct{}) {
@@ -556,6 +605,12 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 			knownPySrcs,
 			existingPyLibraries,
 		)
+		existingPyLibraries = adoptEmptyAggregatePackageLibraryForSplitLayout(
+			args,
+			pyLibraryKind,
+			packageLibraryName,
+			existingPyLibraries,
+		)
 	}
 	existingPyTests := collectExistingPythonSourceRules(args, pyTestKind, knownPySrcs)
 	splitPackageLibraryLayout := false
@@ -783,7 +838,7 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 
 	for _, existingPyLibrary := range existingPyLibraries {
 		srcs := existingPyLibrary.srcs
-		if existingPyLibrary.name == packageLibraryName {
+		if existingPyLibrary.name == packageLibraryName && existingPyLibrary.declaredSrcCount > 0 {
 			mergedSrcs := treeset.NewWith(godsutils.StringComparator)
 			srcs.Each(func(index int, filename interface{}) {
 				mergedSrcs.Add(filename)

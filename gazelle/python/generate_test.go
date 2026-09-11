@@ -163,3 +163,91 @@ func TestHasSplitPackageLibraryLayout(t *testing.T) {
 	}
 	assert.False(t, hasSplitPackageLibraryLayout(packageLibraryName, overlapRules))
 }
+
+func TestAdoptEmptyAggregatePackageLibraryForSplitLayout(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "foo.py"), []byte(""), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "bar.py"), []byte(""), 0o600))
+
+	packageLibraryName := "pkg"
+	args := language.GenerateArgs{
+		Dir: dir,
+		File: newTestBuildFile(
+			rule.NewRule("py_library", packageLibraryName),
+			newPyLibraryRule("foo", []string{"foo.py"}),
+			newPyLibraryRule("bar", []string{"bar.py"}),
+		),
+		Config: &config.Config{},
+	}
+	knownSrcs := map[string]struct{}{"foo.py": {}, "bar.py": {}}
+
+	adopted := adoptEmptyAggregatePackageLibraryForSplitLayout(
+		args,
+		pyLibraryKind,
+		packageLibraryName,
+		collectExistingPythonSourceRules(args, pyLibraryKind, knownSrcs),
+	)
+	require.Len(t, adopted, 3)
+	assert.True(t, hasSplitPackageLibraryLayout(packageLibraryName, adopted))
+
+	var packageRule *existingPythonSourceRule
+	for i := range adopted {
+		if adopted[i].name == packageLibraryName {
+			packageRule = &adopted[i]
+			break
+		}
+	}
+	require.NotNil(t, packageRule)
+	assert.Equal(t, 0, packageRule.srcs.Size())
+	assert.Equal(t, 0, packageRule.declaredSrcCount)
+}
+
+func TestAdoptEmptyAggregatePackageLibraryIgnoredWithoutPerFileLibraries(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	packageLibraryName := "pkg"
+	args := language.GenerateArgs{
+		Dir:    dir,
+		File:   newTestBuildFile(rule.NewRule("py_library", packageLibraryName)),
+		Config: &config.Config{},
+	}
+
+	adopted := adoptEmptyAggregatePackageLibraryForSplitLayout(
+		args,
+		pyLibraryKind,
+		packageLibraryName,
+		nil,
+	)
+	assert.Nil(t, adopted)
+}
+
+func TestAdoptEmptyAggregatePackageLibraryIgnoredWithMultiSrcLibrary(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "foo.py"), []byte(""), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "bar.py"), []byte(""), 0o600))
+
+	packageLibraryName := "pkg"
+	args := language.GenerateArgs{
+		Dir: dir,
+		File: newTestBuildFile(
+			rule.NewRule("py_library", packageLibraryName),
+			newPyLibraryRule("custom", []string{"foo.py", "bar.py"}),
+		),
+		Config: &config.Config{},
+	}
+	knownSrcs := map[string]struct{}{"foo.py": {}, "bar.py": {}}
+
+	adopted := adoptEmptyAggregatePackageLibraryForSplitLayout(
+		args,
+		pyLibraryKind,
+		packageLibraryName,
+		collectExistingPythonSourceRules(args, pyLibraryKind, knownSrcs),
+	)
+	require.Len(t, adopted, 1)
+	assert.Equal(t, "custom", adopted[0].name)
+}
