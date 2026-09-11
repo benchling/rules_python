@@ -261,7 +261,7 @@ func TestAdoptEmptyAggregatePackageLibraryIgnoredWithoutPerFileLibraries(t *test
 	assert.Nil(t, adopted)
 }
 
-func TestHasAllPerFileLibrariesLayout(t *testing.T) {
+func TestHasExplicitSourceOwnershipLayout(t *testing.T) {
 	t.Parallel()
 
 	packageLibraryName := "pkg"
@@ -273,19 +273,45 @@ func TestHasAllPerFileLibrariesLayout(t *testing.T) {
 		{name: "foo", srcs: fooSrcs, declaredSrcCount: 1},
 		{name: "bar", srcs: barSrcs, declaredSrcCount: 1},
 	}
-	assert.True(t, hasAllPerFileLibrariesLayout(packageLibraryName, rules, libraryFilenames))
+	assert.True(t, hasExplicitSourceOwnershipLayout(packageLibraryName, rules, libraryFilenames))
 
 	withPackageLib := append(rules, existingPythonSourceRule{
 		name:             packageLibraryName,
 		srcs:             treeset.NewWith(godsutils.StringComparator),
 		declaredSrcCount: 0,
 	})
-	assert.False(t, hasAllPerFileLibrariesLayout(packageLibraryName, withPackageLib, libraryFilenames))
+	assert.False(t, hasExplicitSourceOwnershipLayout(packageLibraryName, withPackageLib, libraryFilenames))
 
 	multiSrc := []existingPythonSourceRule{
 		{name: "custom", srcs: libraryFilenames, declaredSrcCount: 2},
 	}
-	assert.False(t, hasAllPerFileLibrariesLayout(packageLibraryName, multiSrc, libraryFilenames))
+	assert.True(t, hasExplicitSourceOwnershipLayout(packageLibraryName, multiSrc, libraryFilenames))
+
+	authSrcs := treeset.NewWith(godsutils.StringComparator, "auth.py", "oauth2.py")
+	mixedFilenames := treeset.NewWith(godsutils.StringComparator, "foo.py", "auth.py", "oauth2.py")
+	mixed := []existingPythonSourceRule{
+		{name: "foo", srcs: fooSrcs, declaredSrcCount: 1},
+		{name: "auth", srcs: authSrcs, declaredSrcCount: 2},
+	}
+	assert.True(t, hasExplicitSourceOwnershipLayout(packageLibraryName, mixed, mixedFilenames))
+
+	onlySrcs := treeset.NewWith(godsutils.StringComparator, "only.py")
+	singleTarget := []existingPythonSourceRule{
+		{name: "only", srcs: onlySrcs, declaredSrcCount: 1},
+	}
+	singleFilenames := treeset.NewWith(godsutils.StringComparator, "only.py")
+	assert.True(t, hasExplicitSourceOwnershipLayout(packageLibraryName, singleTarget, singleFilenames))
+
+	overlap := []existingPythonSourceRule{
+		{name: "a", srcs: fooSrcs, declaredSrcCount: 1},
+		{name: "b", srcs: libraryFilenames, declaredSrcCount: 2},
+	}
+	assert.False(t, hasExplicitSourceOwnershipLayout(packageLibraryName, overlap, libraryFilenames))
+
+	partial := []existingPythonSourceRule{
+		{name: "foo", srcs: fooSrcs, declaredSrcCount: 1},
+	}
+	assert.False(t, hasExplicitSourceOwnershipLayout(packageLibraryName, partial, libraryFilenames))
 }
 
 func TestAdoptEmptyAggregatePackageLibraryIgnoredWithMultiSrcLibrary(t *testing.T) {

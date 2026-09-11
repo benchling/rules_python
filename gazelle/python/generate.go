@@ -246,17 +246,17 @@ func hasSplitPackageLibraryLayout(packageLibraryName string, rules []existingPyt
 	return true
 }
 
-// hasAllPerFileLibrariesLayout reports whether every Gazelle-managed library
-// source in the package is owned by a distinct single-module preserved target
-// and no target uses the generated package library name. This is the layout
-// where Gazelle must not emit a package-level library and every per-file
-// library must claim its source.
-func hasAllPerFileLibrariesLayout(
+// hasExplicitSourceOwnershipLayout reports whether preserved non-package
+// libraries collectively own every Gazelle-managed library source without
+// overlapping each other and without using the generated package library name.
+// When true, Gazelle must not emit a package-level library and every preserved
+// library must claim its sources, regardless of per-target source counts.
+func hasExplicitSourceOwnershipLayout(
 	packageLibraryName string,
 	rules []existingPythonSourceRule,
 	libraryFilenames *treeset.Set,
 ) bool {
-	if libraryFilenames == nil || libraryFilenames.Empty() {
+	if libraryFilenames == nil || libraryFilenames.Empty() || len(rules) == 0 {
 		return false
 	}
 	for _, sourceRule := range rules {
@@ -264,12 +264,11 @@ func hasAllPerFileLibrariesLayout(
 			return false
 		}
 	}
-	if len(rules) < 2 {
-		return false
-	}
-	for _, sourceRule := range rules {
-		if sourceRule.declaredSrcCount != 1 {
-			return false
+	for i := range rules {
+		for j := i + 1; j < len(rules); j++ {
+			if existingRulesShareSrcs(rules[i], rules[j]) {
+				return false
+			}
 		}
 	}
 	covered := make(map[string]struct{})
@@ -659,7 +658,7 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 	if !cfg.PerFileGeneration() {
 		splitPackageLibraryLayout = hasSplitPackageLibraryLayout(packageLibraryName, existingPyLibraries)
 		if !splitPackageLibraryLayout {
-			splitPackageLibraryLayout = hasAllPerFileLibrariesLayout(
+			splitPackageLibraryLayout = hasExplicitSourceOwnershipLayout(
 				packageLibraryName,
 				existingPyLibraries,
 				pyLibraryFilenames,

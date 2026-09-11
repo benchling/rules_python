@@ -14,5 +14,4 @@ py_library(
     name = "foo",
     srcs = ["foo.py"],
     tags = ["keep_foo"],
-    visibility = ["//:__subpackages__"],
 )
