@@ -891,7 +891,9 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 			continue
 		}
 		srcs := existingPyLibrary.srcs
-		if existingPyLibrary.name == packageLibraryName && existingPyLibrary.declaredSrcCount > 0 {
+		if existingPyLibrary.name == packageLibraryName &&
+			existingPyLibrary.declaredSrcCount > 0 &&
+			!cfg.PerFileGeneration() {
 			mergedSrcs := treeset.NewWith(godsutils.StringComparator)
 			srcs.Each(func(index int, filename interface{}) {
 				mergedSrcs.Add(filename)
