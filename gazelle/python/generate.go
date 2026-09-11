@@ -832,6 +832,13 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 					generateEmptyLibrary = true
 					break
 				}
+				// A hand-written package library that still lists srcs but owns
+				// only excluded or otherwise unmanaged files is not adopted and
+				// leaves nothing for Gazelle to generate. Do not treat it as an
+				// empty generated library to remove.
+				if len(r.AttrStrings("srcs")) > 0 {
+					return
+				}
 				result.Empty = append(result.Empty, newTargetBuilder(
 					pyLibraryKind,
 					pyLibraryTargetName,
