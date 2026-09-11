@@ -213,7 +213,11 @@ Gazelle regenerates eligible hand-written {bzl:obj}`py_library` and
 non-empty list of relative `.py` paths and at least one of those paths is a
 source Gazelle manages. Targets are excluded from this behavior when:
 
-- Their name is one Gazelle will generate.
+- In file generation mode, their name is one Gazelle will generate for a
+  source file in the package. In package generation mode, their name is the
+  generated package library or test target unless the package uses a split
+  layout: a package library alongside per-file libraries with disjoint
+  sources.
 - Their `srcs` attribute uses `glob()`, a label, or a non-`.py` file.
 - Their `srcs` contains `__main__.py`, `__test__.py`, or `conftest.py`, which
   Gazelle handles with dedicated targets.

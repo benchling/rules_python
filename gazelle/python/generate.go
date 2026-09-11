@@ -208,6 +208,44 @@ func filterExistingPythonSourceRules(
 	return filtered
 }
 
+// existingRulesShareSrcs reports whether two preserved rules list the same
+// source file.
+func existingRulesShareSrcs(a, b existingPythonSourceRule) bool {
+	it := a.srcs.Iterator()
+	for it.Next() {
+		if b.srcs.Contains(it.Value()) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasSplitPackageLibraryLayout reports whether the package already defines the
+// generated package library name alongside other preserved libraries whose
+// sources are disjoint from it. This is the layout where per-file libraries own
+// individual modules and the package library owns the remainder.
+func hasSplitPackageLibraryLayout(packageLibraryName string, rules []existingPythonSourceRule) bool {
+	var packageLibrary *existingPythonSourceRule
+	for i := range rules {
+		if rules[i].name == packageLibraryName {
+			packageLibrary = &rules[i]
+			break
+		}
+	}
+	if packageLibrary == nil || len(rules) < 2 {
+		return false
+	}
+	for _, other := range rules {
+		if other.name == packageLibraryName {
+			continue
+		}
+		if existingRulesShareSrcs(*packageLibrary, other) {
+			return false
+		}
+	}
+	return true
+}
+
 // addTargetNamesForSrcs records the per-file target name Gazelle derives from
 // each of srcs.
 func addTargetNamesForSrcs(srcs *treeset.Set, dst map[string]struct{}) {
@@ -437,19 +475,27 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 		}
 	}
 
-	// generatedTargetNames holds the names of the targets Gazelle generates in
-	// this package. An existing rule with one of those names is not a
-	// hand-written target to adopt, it is the target Gazelle would have
-	// generated anyway. Adopting it would put two rules with the same name into
-	// result.Gen, where they merge into one and silently orphan the sources of
-	// whichever rule lost. This is computed before claiming so that it still
-	// covers the per-file names of the sources an adopted rule takes over.
+	// generatedTargetNames holds per-file target names Gazelle generates in this
+	// package. In file mode, an existing rule with one of those names is not a
+	// hand-written target to adopt: adopting it would let it claim sources that
+	// belong in other per-file targets, and the generated rule of the same name
+	// would merge over it and drop them. Package- and project-level library and
+	// test names are intentionally absent: those targets are regenerated in
+	// place. Dedicated binary and conftest target names are always excluded.
+	packageLibraryName := cfg.RenderLibraryName(packageName)
+	existingPyLibraries := collectExistingPythonSourceRules(args, pyLibraryKind, knownPySrcs)
+	existingPyTests := collectExistingPythonSourceRules(args, pyTestKind, knownPySrcs)
+	splitPackageLibraryLayout := false
+	if !cfg.PerFileGeneration() {
+		splitPackageLibraryLayout = hasSplitPackageLibraryLayout(packageLibraryName, existingPyLibraries)
+	}
+
 	generatedTargetNames := make(map[string]struct{})
 	if cfg.PerFileGeneration() {
 		addTargetNamesForSrcs(pyLibraryFilenames, generatedTargetNames)
 		addTargetNamesForSrcs(pyTestFilenames, generatedTargetNames)
-	} else {
-		generatedTargetNames[cfg.RenderLibraryName(packageName)] = struct{}{}
+	} else if !splitPackageLibraryLayout {
+		generatedTargetNames[packageLibraryName] = struct{}{}
 		generatedTargetNames[cfg.RenderTestName(packageName)] = struct{}{}
 	}
 	if hasPyBinaryEntryPointFile {
@@ -463,23 +509,31 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 		return !isGenerated
 	}
 
-	existingPyLibraries := collectExistingPythonSourceRules(args, pyLibraryKind, knownPySrcs)
-	existingPyTests := collectExistingPythonSourceRules(args, pyTestKind, knownPySrcs)
 	existingPyLibraries = filterExistingPythonSourceRules(
 		existingPyLibraries,
 		isNotGeneratedTargetName,
 	)
 	existingPyTests = filterExistingPythonSourceRules(existingPyTests, isNotGeneratedTargetName)
+	hasPreservedPackageLibrary := splitPackageLibraryLayout
 	// A library that owns a single source does not claim it: the source stays in
 	// the generated target as well, which is what users of the long-standing
 	// "extra target over one file" pattern expect. Coarse-grained generation has
 	// a single library for the whole tree, so there claiming is unconditional or
-	// the source would be owned twice. A py_test always claims, because a source
-	// pulled into two test targets is executed twice.
+	// the source would be owned twice. When a hand-written target already uses
+	// the package library name alongside per-file libraries, every other
+	// preserved library claims its sources so the generated package library does
+	// not duplicate them. A py_test always claims, because a source pulled into
+	// two test targets is executed twice.
 	claimingPyLibraries := filterExistingPythonSourceRules(
 		existingPyLibraries,
 		func(sourceRule existingPythonSourceRule) bool {
-			return sourceRule.declaredSrcCount > 1 || cfg.CoarseGrainedGeneration()
+			if sourceRule.declaredSrcCount > 1 || cfg.CoarseGrainedGeneration() {
+				return true
+			}
+			if hasPreservedPackageLibrary && sourceRule.name != packageLibraryName {
+				return true
+			}
+			return false
 		},
 	)
 	removeClaimedSrcs(claimingPyLibraries, pyLibraryFilenames, pyTestFilenames)
@@ -655,7 +709,18 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 	}
 
 	for _, existingPyLibrary := range existingPyLibraries {
-		appendPyLibrary(existingPyLibrary.srcs, existingPyLibrary.name, false, true)
+		srcs := existingPyLibrary.srcs
+		if existingPyLibrary.name == packageLibraryName {
+			mergedSrcs := treeset.NewWith(godsutils.StringComparator)
+			srcs.Each(func(index int, filename interface{}) {
+				mergedSrcs.Add(filename)
+			})
+			pyLibraryFilenames.Each(func(index int, filename interface{}) {
+				mergedSrcs.Add(filename)
+			})
+			srcs = mergedSrcs
+		}
+		appendPyLibrary(srcs, existingPyLibrary.name, false, true)
 	}
 
 	if cfg.PerFileGeneration() {
@@ -670,8 +735,8 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 			}
 			appendPyLibrary(srcs, pyLibraryTargetName, autoIncludeInit, false)
 		})
-	} else {
-		appendPyLibrary(pyLibraryFilenames, cfg.RenderLibraryName(packageName), false, false)
+	} else if !hasPreservedPackageLibrary {
+		appendPyLibrary(pyLibraryFilenames, packageLibraryName, false, false)
 	}
 
 	if hasPyBinaryEntryPointFile {
