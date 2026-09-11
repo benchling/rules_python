@@ -11,11 +11,3 @@ py_library(
     srcs = ["bar.py"],
     tags = ["keep_bar"],
 )
-
-# Package library name Gazelle generates in package mode; deps-only aggregate.
-py_library(
-    name = "package_mode_respect_existing_split_package_library_empty_aggregate",
-    tags = ["keep_pkg"],
-    visibility = ["//visibility:public"],
-    deps = [":foo"],
-)

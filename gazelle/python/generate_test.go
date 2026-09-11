@@ -197,8 +197,8 @@ func TestEmptyAggregateFixtureSplitLayout(t *testing.T) {
 
 	rules := collectExistingPythonSourceRules(args, pyLibraryKind, knownSrcs)
 	rules = adoptEmptyAggregatePackageLibraryForSplitLayout(args, pyLibraryKind, packageLibraryName, rules)
-	require.Len(t, rules, 3)
-	assert.True(t, hasSplitPackageLibraryLayout(packageLibraryName, rules))
+	require.Len(t, rules, 2)
+	assert.False(t, hasSplitPackageLibraryLayout(packageLibraryName, rules))
 }
 
 func TestAdoptEmptyAggregatePackageLibraryForSplitLayout(t *testing.T) {
@@ -226,19 +226,8 @@ func TestAdoptEmptyAggregatePackageLibraryForSplitLayout(t *testing.T) {
 		packageLibraryName,
 		collectExistingPythonSourceRules(args, pyLibraryKind, knownSrcs),
 	)
-	require.Len(t, adopted, 3)
-	assert.True(t, hasSplitPackageLibraryLayout(packageLibraryName, adopted))
-
-	var packageRule *existingPythonSourceRule
-	for i := range adopted {
-		if adopted[i].name == packageLibraryName {
-			packageRule = &adopted[i]
-			break
-		}
-	}
-	require.NotNil(t, packageRule)
-	assert.Equal(t, 0, packageRule.srcs.Size())
-	assert.Equal(t, 0, packageRule.declaredSrcCount)
+	require.Len(t, adopted, 2)
+	assert.False(t, hasSplitPackageLibraryLayout(packageLibraryName, adopted))
 }
 
 func TestAdoptEmptyAggregatePackageLibraryIgnoredWithoutPerFileLibraries(t *testing.T) {

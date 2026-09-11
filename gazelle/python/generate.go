@@ -352,11 +352,10 @@ func adoptExcludedInitOnlyPackageLibraryForSplitLayout(
 }
 
 // adoptEmptyAggregatePackageLibraryForSplitLayout appends the hand-written
-// package library when it omits srcs entirely. That target is otherwise not
-// adopted because collectExistingPythonSourceRules ignores rules without srcs,
-// but it is still the deps-only package aggregate in a split layout and must
-// be preserved so Gazelle does not emit a competing package-level library.
-// Only applies when every other adopted library is a single-module target.
+// package library when it omits srcs entirely and is marked with "# keep".
+// Without "# keep", such targets are stale deps-only aggregates and are removed
+// instead. Only applies when every other adopted library is a single-module
+// target.
 func adoptEmptyAggregatePackageLibraryForSplitLayout(
 	args language.GenerateArgs,
 	kind string,
@@ -382,6 +381,9 @@ func adoptEmptyAggregatePackageLibraryForSplitLayout(
 			continue
 		}
 		if len(existingRule.AttrStrings("srcs")) != 0 {
+			return rules
+		}
+		if !existingRule.ShouldKeep() {
 			return rules
 		}
 
@@ -817,9 +819,22 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 			}
 			generateEmptyLibrary := false
 			for _, r := range args.File.Rules {
-				if r.Name() == pyLibraryTargetName && kindMatches(args.Config, r, pyLibraryKind) {
-					generateEmptyLibrary = true
+				if r.Name() != pyLibraryTargetName || !kindMatches(args.Config, r, pyLibraryKind) {
+					continue
 				}
+				if r.ShouldKeep() {
+					generateEmptyLibrary = true
+					break
+				}
+				result.Empty = append(result.Empty, newTargetBuilder(
+					pyLibraryKind,
+					pyLibraryTargetName,
+					pythonProjectRoot,
+					args.Rel,
+					pyFileNames,
+					cfg.ResolveSiblingImports(),
+				).build())
+				return
 			}
 			if !generateEmptyLibrary {
 				return
@@ -1103,6 +1118,7 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 	}
 	emptyRules := py.getRulesWithInvalidSrcs(args, validFilesMap)
 	result.Empty = append(result.Empty, emptyRules...)
+	result.Empty = append(result.Empty, getStaleSourcelessPyLibraryRules(args, packageLibraryName, generatedTargetNames, result.Empty)...)
 	if !collisionErrors.Empty() {
 		it := collisionErrors.Iterator()
 		for it.Next() {
@@ -1112,6 +1128,54 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 	}
 
 	return result
+}
+
+// getStaleSourcelessPyLibraryRules returns deps-only py_library targets with no
+// srcs that Gazelle should delete. Hand-written re-export umbrellas must use
+// a "# keep" suffix comment to opt out.
+func getStaleSourcelessPyLibraryRules(
+	args language.GenerateArgs,
+	packageLibraryName string,
+	generatedTargetNames map[string]struct{},
+	alreadyScheduled []*rule.Rule,
+) []*rule.Rule {
+	if args.File == nil {
+		return nil
+	}
+	alreadyEmpty := make(map[string]struct{}, len(alreadyScheduled))
+	for _, r := range alreadyScheduled {
+		alreadyEmpty[r.Name()] = struct{}{}
+	}
+	var stale []*rule.Rule
+	for _, existingRule := range args.File.Rules {
+		if !kindMatches(args.Config, existingRule, pyLibraryKind) {
+			continue
+		}
+		if existingRule.Name() != packageLibraryName {
+			continue
+		}
+		if existingRule.ShouldKeep() {
+			continue
+		}
+		if len(existingRule.AttrStrings("srcs")) != 0 {
+			continue
+		}
+		if _, isGenerated := generatedTargetNames[existingRule.Name()]; isGenerated {
+			continue
+		}
+		if _, dup := alreadyEmpty[existingRule.Name()]; dup {
+			continue
+		}
+		stale = append(stale, newTargetBuilder(
+			pyLibraryKind,
+			existingRule.Name(),
+			"",
+			"",
+			nil,
+			false,
+		).build())
+	}
+	return stale
 }
 
 // ruleListsGazelleManagedSrc reports whether any src is one Gazelle would place
