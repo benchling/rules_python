@@ -631,13 +631,11 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 		}
 	}
 
-	// generatedTargetNames holds per-file target names Gazelle generates in this
-	// package. In file mode, an existing rule with one of those names is not a
-	// hand-written target to adopt: adopting it would let it claim sources that
-	// belong in other per-file targets, and the generated rule of the same name
-	// would merge over it and drop them. Package- and project-level library and
-	// test names are intentionally absent: those targets are regenerated in
-	// place. Dedicated binary and conftest target names are always excluded.
+	// generatedTargetNames holds the names Gazelle generates in this package. An
+	// existing rule with one of those names is not a hand-written target to
+	// adopt: adopting it would put two rules with the same name into result.Gen,
+	// where they merge into one and silently orphan the sources of whichever rule
+	// lost. Names Gazelle does not emit stay available to hand-written targets.
 	packageLibraryName := cfg.RenderLibraryName(packageName)
 	existingPyLibraries := collectExistingPythonSourceRules(args, pyLibraryKind, knownPySrcs)
 	if !cfg.PerFileGeneration() {
@@ -673,8 +671,16 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 		addTargetNamesForSrcs(pyLibraryFilenames, generatedTargetNames)
 		addTargetNamesForSrcs(pyTestFilenames, generatedTargetNames)
 	} else if !splitPackageLibraryLayout {
-		generatedTargetNames[packageLibraryName] = struct{}{}
-		generatedTargetNames[cfg.RenderTestName(packageName)] = struct{}{}
+		// A name is only reserved when Gazelle emits a target with it. A
+		// test-only package generates no package library, so a hand-written
+		// py_test may carry the package library name, and a package without
+		// tests leaves the generated test name free.
+		if !pyLibraryFilenames.Empty() {
+			generatedTargetNames[packageLibraryName] = struct{}{}
+		}
+		if !pyTestFilenames.Empty() || hasPyTestEntryPointFile || hasPyTestEntryPointTarget {
+			generatedTargetNames[cfg.RenderTestName(packageName)] = struct{}{}
+		}
 	}
 	if hasPyBinaryEntryPointFile {
 		generatedTargetNames[cfg.RenderBinaryName(packageName)] = struct{}{}
