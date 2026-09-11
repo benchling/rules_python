@@ -246,6 +246,48 @@ func hasSplitPackageLibraryLayout(packageLibraryName string, rules []existingPyt
 	return true
 }
 
+// hasAllPerFileLibrariesLayout reports whether every Gazelle-managed library
+// source in the package is owned by a distinct single-module preserved target
+// and no target uses the generated package library name. This is the layout
+// where Gazelle must not emit a package-level library and every per-file
+// library must claim its source.
+func hasAllPerFileLibrariesLayout(
+	packageLibraryName string,
+	rules []existingPythonSourceRule,
+	libraryFilenames *treeset.Set,
+) bool {
+	if libraryFilenames == nil || libraryFilenames.Empty() {
+		return false
+	}
+	for _, sourceRule := range rules {
+		if sourceRule.name == packageLibraryName {
+			return false
+		}
+	}
+	if len(rules) < 2 {
+		return false
+	}
+	for _, sourceRule := range rules {
+		if sourceRule.declaredSrcCount != 1 {
+			return false
+		}
+	}
+	covered := make(map[string]struct{})
+	for _, sourceRule := range rules {
+		it := sourceRule.srcs.Iterator()
+		for it.Next() {
+			covered[it.Value().(string)] = struct{}{}
+		}
+	}
+	it := libraryFilenames.Iterator()
+	for it.Next() {
+		if _, ok := covered[it.Value().(string)]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // adoptExcludedInitOnlyPackageLibraryForSplitLayout appends the hand-written
 // package library when it lists only an excluded __init__.py. That target is
 // otherwise not adopted because none of its srcs are Gazelle-managed, but it
@@ -616,6 +658,13 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 	splitPackageLibraryLayout := false
 	if !cfg.PerFileGeneration() {
 		splitPackageLibraryLayout = hasSplitPackageLibraryLayout(packageLibraryName, existingPyLibraries)
+		if !splitPackageLibraryLayout {
+			splitPackageLibraryLayout = hasAllPerFileLibrariesLayout(
+				packageLibraryName,
+				existingPyLibraries,
+				pyLibraryFilenames,
+			)
+		}
 	}
 
 	generatedTargetNames := make(map[string]struct{})
@@ -837,6 +886,11 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 	}
 
 	for _, existingPyLibrary := range existingPyLibraries {
+		if existingPyLibrary.name == packageLibraryName &&
+			existingPyLibrary.declaredSrcCount == 0 &&
+			existingPyLibrary.srcs.Empty() {
+			continue
+		}
 		srcs := existingPyLibrary.srcs
 		if existingPyLibrary.name == packageLibraryName && existingPyLibrary.declaredSrcCount > 0 {
 			mergedSrcs := treeset.NewWith(godsutils.StringComparator)
@@ -1059,12 +1113,59 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 	return result
 }
 
+// ruleListsGazelleManagedSrc reports whether any src is one Gazelle would place
+// in a generated target for this package.
+func ruleListsGazelleManagedSrc(srcs []string, managed map[string]struct{}) bool {
+	for _, src := range srcs {
+		if isTargetSrc(src) || filepath.Ext(src) != ".py" {
+			continue
+		}
+		if _, ok := managed[src]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// isExcludedInitOnlyPackageLibrarySrcOnDisk reports whether src is the only
+// source of the hand-written package library and exists on disk but is hidden
+// from Gazelle generation (for example via gazelle:exclude).
+func isExcludedInitOnlyPackageLibrarySrcOnDisk(
+	args language.GenerateArgs,
+	packageLibraryName string,
+	existingRule *rule.Rule,
+	src string,
+) bool {
+	if !kindMatches(args.Config, existingRule, pyLibraryKind) {
+		return false
+	}
+	if existingRule.Name() != packageLibraryName || src != pyLibraryEntrypointFilename {
+		return false
+	}
+	srcs := existingRule.AttrStrings("srcs")
+	if len(srcs) != 1 {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(args.Dir, src))
+	return err == nil
+}
+
 // getRulesWithInvalidSrcs checks existing Python rules in the BUILD file and return the rules with invalid source files.
 // Invalid source files are files that do not exist or not a target.
 func (py *Python) getRulesWithInvalidSrcs(args language.GenerateArgs, validFilesMap map[string]struct{}) (invalidRules []*rule.Rule) {
 	if args.File == nil {
 		return
 	}
+	packageLibraryName := filepath.Base(args.Dir)
+	if args.Config != nil {
+		if raw, ok := args.Config.Exts[languageName]; ok && raw != nil {
+			cfg := raw.(pythonconfig.Configs)[args.Rel]
+			if cfg != nil {
+				packageLibraryName = cfg.RenderLibraryName(packageLibraryName)
+			}
+		}
+	}
+
 	for _, file := range args.GenFiles {
 		validFilesMap[file] = struct{}{}
 	}
@@ -1109,12 +1210,27 @@ func (py *Python) getRulesWithInvalidSrcs(args language.GenerateArgs, validFiles
 				hasValidSrcs = true
 				break
 			}
-			// Sources hidden from generation via gazelle:exclude or
-			// python_ignore_files are absent from filesMap but may still be
-			// listed in a hand-written target that Gazelle leaves unmanaged.
-			if _, err := os.Stat(filepath.Join(args.Dir, src)); err == nil {
+			if isExcludedInitOnlyPackageLibrarySrcOnDisk(
+				args,
+				packageLibraryName,
+				existingRule,
+				src,
+			) {
 				hasValidSrcs = true
 				break
+			}
+		}
+		if !hasValidSrcs && matchedKind != pyBinaryKind &&
+			!ruleListsGazelleManagedSrc(srcs, validFilesMap) {
+			for _, src := range srcs {
+				if isTargetSrc(src) {
+					hasValidSrcs = true
+					break
+				}
+				if _, err := os.Stat(filepath.Join(args.Dir, src)); err == nil {
+					hasValidSrcs = true
+					break
+				}
 			}
 		}
 		if !hasValidSrcs {

@@ -12,6 +12,8 @@ import (
 	godsutils "github.com/emirpasic/gods/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/bazel-contrib/rules_python/gazelle/pythonconfig"
 )
 
 func newTestBuildFile(rules ...*rule.Rule) *rule.File {
@@ -127,15 +129,22 @@ func TestAdoptExcludedInitOnlyPackageLibraryIgnoredWithoutOtherLibraries(t *test
 func TestGetRulesWithInvalidSrcsKeepsExcludedSourcesOnDisk(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "pkg")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "__init__.py"), []byte(""), 0o600))
 
 	buildFile := newTestBuildFile(newPyLibraryRule("pkg", []string{pyLibraryEntrypointFilename}))
+	pkgConfig := pythonconfig.New(dir, "")
 	args := language.GenerateArgs{
-		Dir:           dir,
-		File:          buildFile,
-		Config:        &config.Config{},
-		RegularFiles:  []string{"foo.py"},
+		Dir:          dir,
+		Rel:          "pkg",
+		File:         buildFile,
+		Config: &config.Config{
+			Exts: map[string]interface{}{
+				"py": pythonconfig.Configs{"pkg": pkgConfig},
+			},
+		},
+		RegularFiles: []string{"foo.py"},
 	}
 
 	py := &Python{}
@@ -162,6 +171,34 @@ func TestHasSplitPackageLibraryLayout(t *testing.T) {
 		{name: packageLibraryName, srcs: overlapPkg, declaredSrcCount: 2},
 	}
 	assert.False(t, hasSplitPackageLibraryLayout(packageLibraryName, overlapRules))
+}
+
+func TestEmptyAggregateFixtureSplitLayout(t *testing.T) {
+	t.Parallel()
+
+	packageLibraryName := "package_mode_respect_existing_split_package_library_empty_aggregate"
+	dir := filepath.Join(t.TempDir(), packageLibraryName)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "foo.py"), []byte(""), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "bar.py"), []byte(""), 0o600))
+
+	pkgRule := rule.NewRule("py_library", packageLibraryName)
+	pkgRule.SetAttr("deps", []string{":foo"})
+	args := language.GenerateArgs{
+		Dir: dir,
+		File: newTestBuildFile(
+			newPyLibraryRule("foo", []string{"foo.py"}),
+			newPyLibraryRule("bar", []string{"bar.py"}),
+			pkgRule,
+		),
+		Config: &config.Config{},
+	}
+	knownSrcs := map[string]struct{}{"foo.py": {}, "bar.py": {}}
+
+	rules := collectExistingPythonSourceRules(args, pyLibraryKind, knownSrcs)
+	rules = adoptEmptyAggregatePackageLibraryForSplitLayout(args, pyLibraryKind, packageLibraryName, rules)
+	require.Len(t, rules, 3)
+	assert.True(t, hasSplitPackageLibraryLayout(packageLibraryName, rules))
 }
 
 func TestAdoptEmptyAggregatePackageLibraryForSplitLayout(t *testing.T) {
@@ -222,6 +259,33 @@ func TestAdoptEmptyAggregatePackageLibraryIgnoredWithoutPerFileLibraries(t *test
 		nil,
 	)
 	assert.Nil(t, adopted)
+}
+
+func TestHasAllPerFileLibrariesLayout(t *testing.T) {
+	t.Parallel()
+
+	packageLibraryName := "pkg"
+	fooSrcs := treeset.NewWith(godsutils.StringComparator, "foo.py")
+	barSrcs := treeset.NewWith(godsutils.StringComparator, "bar.py")
+	libraryFilenames := treeset.NewWith(godsutils.StringComparator, "foo.py", "bar.py")
+
+	rules := []existingPythonSourceRule{
+		{name: "foo", srcs: fooSrcs, declaredSrcCount: 1},
+		{name: "bar", srcs: barSrcs, declaredSrcCount: 1},
+	}
+	assert.True(t, hasAllPerFileLibrariesLayout(packageLibraryName, rules, libraryFilenames))
+
+	withPackageLib := append(rules, existingPythonSourceRule{
+		name:             packageLibraryName,
+		srcs:             treeset.NewWith(godsutils.StringComparator),
+		declaredSrcCount: 0,
+	})
+	assert.False(t, hasAllPerFileLibrariesLayout(packageLibraryName, withPackageLib, libraryFilenames))
+
+	multiSrc := []existingPythonSourceRule{
+		{name: "custom", srcs: libraryFilenames, declaredSrcCount: 2},
+	}
+	assert.False(t, hasAllPerFileLibrariesLayout(packageLibraryName, multiSrc, libraryFilenames))
 }
 
 func TestAdoptEmptyAggregatePackageLibraryIgnoredWithMultiSrcLibrary(t *testing.T) {
