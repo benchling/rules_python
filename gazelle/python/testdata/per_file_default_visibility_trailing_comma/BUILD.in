@@ -1,0 +1,2 @@
+# gazelle:python_generation_mode file
+# gazelle:python_default_visibility //benchling:__subpackages__,//scripts:__subpackages__,//tests:__subpackages__,
