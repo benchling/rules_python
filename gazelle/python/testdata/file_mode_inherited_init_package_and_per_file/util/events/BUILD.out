@@ -1,0 +1,22 @@
+load("@rules_python//python:defs.bzl", "py_library")
+
+py_library(
+    name = "events",
+    srcs = ["__init__.py"],
+    tags = ["keep_events"],
+    visibility = ["//:__subpackages__"],
+)
+
+py_library(
+    name = "datadog",
+    srcs = ["datadog.py"],
+    tags = ["keep_datadog"],
+    visibility = ["//:__subpackages__"],
+)
+
+py_library(
+    name = "user",
+    srcs = ["user.py"],
+    visibility = ["//:__subpackages__"],
+    deps = [":datadog"],
+)

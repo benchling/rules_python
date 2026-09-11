@@ -1,0 +1,15 @@
+load("@rules_python//python:defs.bzl", "py_library")
+
+# gazelle:python_generation_mode file
+# gazelle:python_generation_mode_per_file_include_init true
+
+# Gazelle should extract cli.py into a py_binary but keep __init__.py, which was
+# written by hand rather than added by python_generation_mode_per_file_include_init.
+py_library(
+    name = "custom",
+    srcs = [
+        "__init__.py",
+        "cli.py",
+    ],
+    tags = ["keep_me"],
+)

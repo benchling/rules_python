@@ -16,6 +16,7 @@ package python
 
 import (
 	"path/filepath"
+	"strings"
 
 	"github.com/bazelbuild/bazel-gazelle/config"
 	"github.com/bazelbuild/bazel-gazelle/rule"
@@ -134,6 +135,10 @@ func (t *targetBuilder) addResolvedDependencies(deps []string) *targetBuilder {
 // addVisibility adds visibility labels to the target.
 func (t *targetBuilder) addVisibility(visibility []string) *targetBuilder {
 	for _, item := range visibility {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
 		t.visibility.Add(item)
 	}
 	return t

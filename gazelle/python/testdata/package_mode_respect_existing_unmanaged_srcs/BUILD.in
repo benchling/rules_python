@@ -1,0 +1,17 @@
+load("@rules_python//python:defs.bzl", "py_library")
+
+# gazelle:python_ignore_files ignored.py
+# gazelle:exclude excluded.py
+
+# Gazelle should keep excluded.py and ignored.py because both exist on disk,
+# and prune only removed.py.
+py_library(
+    name = "custom",
+    srcs = [
+        "excluded.py",
+        "foo.py",
+        "ignored.py",
+        "removed.py",
+    ],
+    tags = ["keep_me"],
+)

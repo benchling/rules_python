@@ -1,0 +1,17 @@
+# gazelle:exclude excluded_only.py
+# gazelle:python_generation_mode package
+
+load("@rules_python//python:defs.bzl", "py_library")
+
+# Entirely excluded sources: Gazelle must leave this target unmanaged.
+py_library(
+    name = "excluded_only",
+    srcs = ["excluded_only.py"],
+    tags = ["keep_excluded"],
+)
+
+py_library(
+    name = "foo",
+    srcs = ["foo.py"],
+    tags = ["keep_foo"],
+)
