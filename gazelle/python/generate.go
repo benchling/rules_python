@@ -48,6 +48,19 @@ var (
 	buildFilenames = []string{"BUILD", "BUILD.bazel"}
 )
 
+// existingPythonSourceRule is a hand-written rule that Gazelle regenerates in
+// place instead of replacing.
+type existingPythonSourceRule struct {
+	name string
+	// srcs are the rule's srcs with the entries that no longer exist pruned.
+	srcs *treeset.Set
+	// declaredSrcCount is the number of srcs the rule lists in the BUILD file,
+	// before pruning. Decisions about how a rule is treated are made on this
+	// count so that they reflect only what the user wrote: deleting an unrelated
+	// file must not change how Gazelle handles the rule.
+	declaredSrcCount int
+}
+
 // Returns the mapped kind, or kind if no mapping is configured with the map_kind directive.
 func getMappedKind(c *config.Config, kind string) string {
 	if mapped, ok := c.KindMap[kind]; ok {
@@ -72,6 +85,331 @@ func matchesAnyGlob(s string, globs []string) bool {
 		}
 	}
 	return false
+}
+
+// isTargetSrc reports whether src is a label rather than a file path.
+func isTargetSrc(src string) bool {
+	return strings.HasPrefix(src, "@") || strings.HasPrefix(src, "//") || strings.HasPrefix(src, ":")
+}
+
+// collectExistingPythonSourceRules returns the rules of the canonical kind
+// `kind` that Gazelle should regenerate in place rather than replace. knownSrcs
+// holds the source files Gazelle would itself put in a generated target's srcs.
+//
+// A rule is only adopted if at least one of its srcs is in knownSrcs; a rule
+// built entirely from sources Gazelle was told to leave alone is left alone too.
+// Once adopted, srcs that exist but are absent from knownSrcs are still kept:
+// python_ignore_files, gazelle:exclude and subdirectory sources are hidden from
+// generation, which must not cause Gazelle to delete them from a hand-written
+// target. Only srcs that no longer exist are pruned.
+//
+// A rule listing an entrypoint or conftest.py is never adopted: those sources
+// have dedicated targets that Gazelle always generates, so adopting the rule
+// would leave two targets owning the same file.
+func collectExistingPythonSourceRules(args language.GenerateArgs, kind string, knownSrcs map[string]struct{}) []existingPythonSourceRule {
+	if args.File == nil {
+		return nil
+	}
+
+	genFiles := make(map[string]struct{}, len(args.GenFiles))
+	for _, f := range args.GenFiles {
+		genFiles[f] = struct{}{}
+	}
+	srcExists := func(src string) bool {
+		if _, ok := genFiles[src]; ok {
+			return true
+		}
+		_, err := os.Stat(filepath.Join(args.Dir, src))
+		return err == nil
+	}
+
+	var sourceRules []existingPythonSourceRule
+	for _, existingRule := range args.File.Rules {
+		if !kindMatches(args.Config, existingRule, kind) {
+			continue
+		}
+
+		srcs := existingRule.AttrStrings("srcs")
+		if len(srcs) == 0 {
+			continue
+		}
+
+		validSrcs := treeset.NewWith(godsutils.StringComparator)
+		skip := false
+		hasKnownSrc := false
+		for _, src := range srcs {
+			if isTargetSrc(src) || filepath.Ext(src) != ".py" {
+				skip = true
+				break
+			}
+			if src == pyBinaryEntrypointFilename ||
+				src == pyTestEntrypointFilename ||
+				src == conftestFilename {
+				skip = true
+				break
+			}
+			if _, ok := knownSrcs[src]; ok {
+				hasKnownSrc = true
+				validSrcs.Add(src)
+			} else if srcExists(src) {
+				validSrcs.Add(src)
+			}
+		}
+		if skip {
+			continue
+		}
+		if !hasKnownSrc {
+			continue
+		}
+
+		sourceRules = append(sourceRules, existingPythonSourceRule{
+			name:             existingRule.Name(),
+			srcs:             validSrcs,
+			declaredSrcCount: len(srcs),
+		})
+	}
+	return sourceRules
+}
+
+// addSetValuesToMap copies every value in srcs into dst.
+func addSetValuesToMap(srcs *treeset.Set, dst map[string]struct{}) {
+	it := srcs.Iterator()
+	for it.Next() {
+		dst[it.Value().(string)] = struct{}{}
+	}
+}
+
+// removeClaimedSrcs removes sources owned by rules from the generated source
+// sets. A preserved rule claims a source when it becomes its sole generated
+// owner rather than sharing it with another target Gazelle generates.
+func removeClaimedSrcs(rules []existingPythonSourceRule, srcSets ...*treeset.Set) {
+	for _, sourceRule := range rules {
+		it := sourceRule.srcs.Iterator()
+		for it.Next() {
+			src := it.Value().(string)
+			for _, srcSet := range srcSets {
+				srcSet.Remove(src)
+			}
+		}
+	}
+}
+
+// filterExistingPythonSourceRules returns the rules accepted by shouldKeep.
+func filterExistingPythonSourceRules(
+	rules []existingPythonSourceRule,
+	shouldKeep func(existingPythonSourceRule) bool,
+) []existingPythonSourceRule {
+	filtered := make([]existingPythonSourceRule, 0, len(rules))
+	for _, sourceRule := range rules {
+		if shouldKeep(sourceRule) {
+			filtered = append(filtered, sourceRule)
+		}
+	}
+	return filtered
+}
+
+// existingRulesShareSrcs reports whether two preserved rules list the same
+// source file.
+func existingRulesShareSrcs(a, b existingPythonSourceRule) bool {
+	it := a.srcs.Iterator()
+	for it.Next() {
+		if b.srcs.Contains(it.Value()) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasSplitPackageLibraryLayout reports whether the package already defines the
+// generated package library name alongside other preserved libraries whose
+// sources are disjoint from it. This is the layout where per-file libraries own
+// individual modules and the package library owns the remainder.
+func hasSplitPackageLibraryLayout(packageLibraryName string, rules []existingPythonSourceRule) bool {
+	var packageLibrary *existingPythonSourceRule
+	for i := range rules {
+		if rules[i].name == packageLibraryName {
+			packageLibrary = &rules[i]
+			break
+		}
+	}
+	if packageLibrary == nil || len(rules) < 2 {
+		return false
+	}
+	for _, other := range rules {
+		if other.name == packageLibraryName {
+			continue
+		}
+		if existingRulesShareSrcs(*packageLibrary, other) {
+			return false
+		}
+	}
+	return true
+}
+
+// hasExplicitSourceOwnershipLayout reports whether preserved non-package
+// libraries collectively own every Gazelle-managed library source without
+// overlapping each other and without using the generated package library name.
+// When true, Gazelle must not emit a package-level library and every preserved
+// library must claim its sources, regardless of per-target source counts.
+func hasExplicitSourceOwnershipLayout(
+	packageLibraryName string,
+	rules []existingPythonSourceRule,
+	libraryFilenames *treeset.Set,
+) bool {
+	if libraryFilenames == nil || libraryFilenames.Empty() || len(rules) == 0 {
+		return false
+	}
+	for _, sourceRule := range rules {
+		if sourceRule.name == packageLibraryName {
+			return false
+		}
+	}
+	for i := range rules {
+		for j := i + 1; j < len(rules); j++ {
+			if existingRulesShareSrcs(rules[i], rules[j]) {
+				return false
+			}
+		}
+	}
+	covered := make(map[string]struct{})
+	for _, sourceRule := range rules {
+		it := sourceRule.srcs.Iterator()
+		for it.Next() {
+			covered[it.Value().(string)] = struct{}{}
+		}
+	}
+	it := libraryFilenames.Iterator()
+	for it.Next() {
+		if _, ok := covered[it.Value().(string)]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// adoptExcludedInitOnlyPackageLibraryForSplitLayout appends the hand-written
+// package library when it lists only an excluded __init__.py. That target is
+// otherwise not adopted because none of its srcs are Gazelle-managed, but it
+// is still the package aggregate in a split layout and must be preserved so
+// Gazelle does not emit a competing package-level library.
+func adoptExcludedInitOnlyPackageLibraryForSplitLayout(
+	args language.GenerateArgs,
+	kind string,
+	packageLibraryName string,
+	knownSrcs map[string]struct{},
+	rules []existingPythonSourceRule,
+) []existingPythonSourceRule {
+	if args.File == nil || len(rules) == 0 {
+		return rules
+	}
+	for _, sourceRule := range rules {
+		if sourceRule.name == packageLibraryName {
+			return rules
+		}
+	}
+
+	genFiles := make(map[string]struct{}, len(args.GenFiles))
+	for _, f := range args.GenFiles {
+		genFiles[f] = struct{}{}
+	}
+	srcExists := func(src string) bool {
+		if _, ok := genFiles[src]; ok {
+			return true
+		}
+		_, err := os.Stat(filepath.Join(args.Dir, src))
+		return err == nil
+	}
+
+	for _, existingRule := range args.File.Rules {
+		if existingRule.Name() != packageLibraryName || !kindMatches(args.Config, existingRule, kind) {
+			continue
+		}
+		srcs := existingRule.AttrStrings("srcs")
+		if len(srcs) != 1 || srcs[0] != pyLibraryEntrypointFilename {
+			return rules
+		}
+		if _, ok := knownSrcs[pyLibraryEntrypointFilename]; ok {
+			return rules
+		}
+		if !srcExists(pyLibraryEntrypointFilename) {
+			return rules
+		}
+
+		validSrcs := treeset.NewWith(godsutils.StringComparator, pyLibraryEntrypointFilename)
+		candidate := existingPythonSourceRule{
+			name:             packageLibraryName,
+			srcs:             validSrcs,
+			declaredSrcCount: 1,
+		}
+		for _, other := range rules {
+			if existingRulesShareSrcs(candidate, other) {
+				return rules
+			}
+		}
+		return append(rules, candidate)
+	}
+	return rules
+}
+
+// adoptEmptyAggregatePackageLibraryForSplitLayout appends the hand-written
+// package library when it omits srcs entirely and is marked with "# keep".
+// Without "# keep", such targets are stale deps-only aggregates and are removed
+// instead. Only applies when every other adopted library is a single-module
+// target.
+func adoptEmptyAggregatePackageLibraryForSplitLayout(
+	args language.GenerateArgs,
+	kind string,
+	packageLibraryName string,
+	rules []existingPythonSourceRule,
+) []existingPythonSourceRule {
+	if args.File == nil || len(rules) == 0 {
+		return rules
+	}
+	for _, sourceRule := range rules {
+		if sourceRule.name == packageLibraryName {
+			return rules
+		}
+	}
+	for _, other := range rules {
+		if other.declaredSrcCount != 1 {
+			return rules
+		}
+	}
+
+	for _, existingRule := range args.File.Rules {
+		if existingRule.Name() != packageLibraryName || !kindMatches(args.Config, existingRule, kind) {
+			continue
+		}
+		if len(existingRule.AttrStrings("srcs")) != 0 {
+			return rules
+		}
+		if !existingRule.ShouldKeep() {
+			return rules
+		}
+
+		candidate := existingPythonSourceRule{
+			name:             packageLibraryName,
+			srcs:             treeset.NewWith(godsutils.StringComparator),
+			declaredSrcCount: 0,
+		}
+		for _, other := range rules {
+			if existingRulesShareSrcs(candidate, other) {
+				return rules
+			}
+		}
+		return append(rules, candidate)
+	}
+	return rules
+}
+
+// addTargetNamesForSrcs records the per-file target name Gazelle derives from
+// each of srcs.
+func addTargetNamesForSrcs(srcs *treeset.Set, dst map[string]struct{}) {
+	it := srcs.Iterator()
+	for it.Next() {
+		src := it.Value().(string)
+		dst[strings.TrimSuffix(filepath.Base(src), ".py")] = struct{}{}
+	}
 }
 
 // findConftestPaths returns package paths containing conftest.py, from currentPkg
@@ -271,27 +609,165 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 		autoIncludeInit = cfg.PerFileGenerationIncludeInit() && hasInit && hasPopulatedInit
 	}
 
-	appendPyLibrary := func(srcs *treeset.Set, pyLibraryTargetName string) {
-		allDeps, mainModules, annotations, err := parser.parse(srcs)
-		for name := range mainModules {
-			validFilesMap[name] = struct{}{}
+	// knownPySrcs is the set of source files Gazelle manages in this package, i.e.
+	// the ones it would put in a generated target's srcs. It is narrower than "the
+	// .py files that exist here": files hidden by python_ignore_files or
+	// gazelle:exclude, and subdirectory files in per-package mode, are absent.
+	// The entrypoints and conftest.py are diverted out of pyLibraryFilenames and
+	// pyTestFilenames by the scan above, so they are added back explicitly.
+	knownPySrcs := make(map[string]struct{})
+	addSetValuesToMap(pyLibraryFilenames, knownPySrcs)
+	addSetValuesToMap(pyTestFilenames, knownPySrcs)
+	for _, src := range []struct {
+		name    string
+		present bool
+	}{
+		{pyBinaryEntrypointFilename, hasPyBinaryEntryPointFile},
+		{pyTestEntrypointFilename, hasPyTestEntryPointFile},
+		{conftestFilename, hasConftestFile},
+	} {
+		if src.present {
+			knownPySrcs[src.name] = struct{}{}
 		}
+	}
+
+	// generatedTargetNames holds the names Gazelle generates in this package. An
+	// existing rule with one of those names is not a hand-written target to
+	// adopt: adopting it would put two rules with the same name into result.Gen,
+	// where they merge into one and silently orphan the sources of whichever rule
+	// lost. Names Gazelle does not emit stay available to hand-written targets.
+	packageLibraryName := cfg.RenderLibraryName(packageName)
+	existingPyLibraries := collectExistingPythonSourceRules(args, pyLibraryKind, knownPySrcs)
+	if !cfg.PerFileGeneration() {
+		existingPyLibraries = adoptExcludedInitOnlyPackageLibraryForSplitLayout(
+			args,
+			pyLibraryKind,
+			packageLibraryName,
+			knownPySrcs,
+			existingPyLibraries,
+		)
+		existingPyLibraries = adoptEmptyAggregatePackageLibraryForSplitLayout(
+			args,
+			pyLibraryKind,
+			packageLibraryName,
+			existingPyLibraries,
+		)
+	}
+	existingPyTests := collectExistingPythonSourceRules(args, pyTestKind, knownPySrcs)
+	splitPackageLibraryLayout := false
+	if !cfg.PerFileGeneration() {
+		splitPackageLibraryLayout = hasSplitPackageLibraryLayout(packageLibraryName, existingPyLibraries)
+		if !splitPackageLibraryLayout {
+			splitPackageLibraryLayout = hasExplicitSourceOwnershipLayout(
+				packageLibraryName,
+				existingPyLibraries,
+				pyLibraryFilenames,
+			)
+		}
+	}
+
+	generatedTargetNames := make(map[string]struct{})
+	if cfg.PerFileGeneration() {
+		addTargetNamesForSrcs(pyLibraryFilenames, generatedTargetNames)
+		addTargetNamesForSrcs(pyTestFilenames, generatedTargetNames)
+	} else if !splitPackageLibraryLayout {
+		// A name is only reserved when Gazelle emits a target with it. A
+		// test-only package generates no package library, so a hand-written
+		// py_test may carry the package library name, and a package without
+		// tests leaves the generated test name free.
+		if !pyLibraryFilenames.Empty() {
+			generatedTargetNames[packageLibraryName] = struct{}{}
+		}
+		if !pyTestFilenames.Empty() || hasPyTestEntryPointFile || hasPyTestEntryPointTarget {
+			generatedTargetNames[cfg.RenderTestName(packageName)] = struct{}{}
+		}
+	}
+	if hasPyBinaryEntryPointFile {
+		generatedTargetNames[cfg.RenderBinaryName(packageName)] = struct{}{}
+	}
+	if hasConftestFile {
+		generatedTargetNames[conftestTargetname] = struct{}{}
+	}
+	isNotGeneratedTargetName := func(sourceRule existingPythonSourceRule) bool {
+		_, isGenerated := generatedTargetNames[sourceRule.name]
+		return !isGenerated
+	}
+
+	existingPyLibraries = filterExistingPythonSourceRules(
+		existingPyLibraries,
+		isNotGeneratedTargetName,
+	)
+	existingPyTests = filterExistingPythonSourceRules(existingPyTests, isNotGeneratedTargetName)
+	hasPreservedPackageLibrary := splitPackageLibraryLayout
+	// A library that owns a single source does not claim it: the source stays in
+	// the generated target as well, which is what users of the long-standing
+	// "extra target over one file" pattern expect. Coarse-grained generation has
+	// a single library for the whole tree, so there claiming is unconditional or
+	// the source would be owned twice. When a hand-written target already uses
+	// the package library name alongside per-file libraries, every other
+	// preserved library claims its sources so the generated package library does
+	// not duplicate them. A py_test always claims, because a source pulled into
+	// two test targets is executed twice.
+	claimingPyLibraries := filterExistingPythonSourceRules(
+		existingPyLibraries,
+		func(sourceRule existingPythonSourceRule) bool {
+			if sourceRule.declaredSrcCount > 1 || cfg.CoarseGrainedGeneration() {
+				return true
+			}
+			if hasPreservedPackageLibrary && sourceRule.name != packageLibraryName {
+				return true
+			}
+			return false
+		},
+	)
+	removeClaimedSrcs(claimingPyLibraries, pyLibraryFilenames, pyTestFilenames)
+	removeClaimedSrcs(existingPyTests, pyLibraryFilenames, pyTestFilenames)
+
+	// extractedMainModules tracks the main modules that already have a generated
+	// py_binary target. A source file can be owned by both a preserved target and
+	// a generated one, in which case appendPyLibrary sees it twice and would
+	// otherwise emit a duplicate py_binary for it.
+	extractedMainModules := make(map[string]struct{})
+
+	// autoIncludedInit reports whether the caller added pyLibraryEntrypointFilename
+	// to srcs itself, rather than it being a source the user listed by hand. Only
+	// in the former case may it be removed again when a main module is extracted.
+	//
+	// isPreserved reports whether the target is an existing hand-written one being
+	// regenerated in place, as opposed to one Gazelle created.
+	appendPyLibrary := func(
+		srcs *treeset.Set,
+		pyLibraryTargetName string,
+		autoIncludedInit, isPreserved bool,
+	) {
+		allDeps, mainModules, annotations, err := parser.parse(srcs)
 		if err != nil {
 			log.Fatalf("ERROR: %v\n", err)
 		}
+		for name := range mainModules {
+			validFilesMap[name] = struct{}{}
+		}
 
+		srcsChanged := false
 		if !hasPyBinaryEntryPointFile {
 			// Creating one py_binary target per main module when __main__.py doesn't exist.
 			mainFileNames := make([]string, 0, len(mainModules))
 			for name := range mainModules {
+				// A py_binary named after the target it would be extracted from
+				// cannot be generated: both rules would land in result.Gen under
+				// the same name and merge into one.
+				if isPreserved && strings.TrimSuffix(filepath.Base(name), ".py") == pyLibraryTargetName {
+					continue
+				}
 				mainFileNames = append(mainFileNames, name)
 
 				// Remove the file from srcs if we're doing per-file library generation so
 				// that we don't also generate a py_library target for it.
 				if cfg.PerFileGeneration() {
 					srcs.Remove(name)
+					srcsChanged = true
 					// Also remove the __init__.py that was added earlier.
-					if autoIncludeInit {
+					if autoIncludedInit {
 						srcs.Remove(pyLibraryEntrypointFilename)
 					}
 				}
@@ -299,6 +775,11 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 
 			sort.Strings(mainFileNames)
 			for _, filename := range mainFileNames {
+				if _, ok := extractedMainModules[filename]; ok {
+					continue
+				}
+				extractedMainModules[filename] = struct{}{}
+
 				pyBinaryTargetName := strings.TrimSuffix(filepath.Base(filename), ".py")
 				if err := ensureNoCollision(args.Config, args.File, pyBinaryTargetName, pyBinaryKind); err != nil {
 					fqTarget := label.New("", args.Rel, pyBinaryTargetName)
@@ -333,17 +814,53 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 		// If we're doing per-file generation, srcs could be empty at this point, meaning we shouldn't make a py_library.
 		// If there is already a package named py_library target before, we should generate an empty py_library.
 		if srcs.Empty() {
+			// Leave a preserved target exactly as it was written instead. Falling
+			// through would build an empty rule, which Gazelle reports as removable
+			// and so deletes a hand-written target.
+			if isPreserved {
+				return
+			}
 			if args.File == nil {
 				return
 			}
 			generateEmptyLibrary := false
 			for _, r := range args.File.Rules {
-				if r.Name() == pyLibraryTargetName && kindMatches(args.Config, r, pyLibraryKind) {
-					generateEmptyLibrary = true
+				if r.Name() != pyLibraryTargetName || !kindMatches(args.Config, r, pyLibraryKind) {
+					continue
 				}
+				if r.ShouldKeep() {
+					generateEmptyLibrary = true
+					break
+				}
+				// A hand-written package library that still lists srcs but owns
+				// only excluded or otherwise unmanaged files is not adopted and
+				// leaves nothing for Gazelle to generate. Do not treat it as an
+				// empty generated library to remove.
+				if len(r.AttrStrings("srcs")) > 0 {
+					return
+				}
+				result.Empty = append(result.Empty, newTargetBuilder(
+					pyLibraryKind,
+					pyLibraryTargetName,
+					pythonProjectRoot,
+					args.Rel,
+					pyFileNames,
+					cfg.ResolveSiblingImports(),
+				).build())
+				return
 			}
 			if !generateEmptyLibrary {
 				return
+			}
+		}
+
+		if srcsChanged {
+			// The dependencies above were derived from the srcs the target had
+			// before the main modules were extracted. Recompute them so the target
+			// does not keep dependencies contributed by a source it no longer owns.
+			allDeps, _, annotations, err = parser.parse(srcs)
+			if err != nil {
+				log.Fatalf("ERROR: %v\n", err)
 			}
 		}
 
@@ -362,15 +879,30 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 			collisionErrors.Add(err)
 		}
 
-		pyLibrary := newTargetBuilder(pyLibraryKind, pyLibraryTargetName, pythonProjectRoot, args.Rel, pyFileNames, cfg.ResolveSiblingImports()).
-			addVisibility(visibility).
+		pyLibraryBuilder := newTargetBuilder(
+			pyLibraryKind,
+			pyLibraryTargetName,
+			pythonProjectRoot,
+			args.Rel,
+			pyFileNames,
+			cfg.ResolveSiblingImports(),
+		).
 			addSrcs(srcs).
 			addPyiSrcs(pyiSrcs).
 			addModuleDependencies(allDeps).
 			addResolvedDependencies(annotations.includeDeps).
 			generateImportsAttribute().
-			setAnnotations(*annotations).
-			build()
+			setAnnotations(*annotations)
+
+		// visibility is not a mergeable attribute, so rule.MergeRules copies it
+		// into an existing rule that does not set one and offers no '# keep' to
+		// prevent that. Injecting it would silently widen a hand-written target
+		// that relies on Bazel's default private visibility.
+		if !isPreserved {
+			pyLibraryBuilder.addVisibility(visibility)
+		}
+
+		pyLibrary := pyLibraryBuilder.build()
 
 		if pyLibrary.IsEmpty(py.Kinds()[pyLibrary.Kind()]) {
 			result.Empty = append(result.Empty, pyLibrary)
@@ -378,6 +910,28 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 			result.Gen = append(result.Gen, pyLibrary)
 			result.Imports = append(result.Imports, pyLibrary.PrivateAttr(config.GazelleImportsKey))
 		}
+	}
+
+	for _, existingPyLibrary := range existingPyLibraries {
+		if existingPyLibrary.name == packageLibraryName &&
+			existingPyLibrary.declaredSrcCount == 0 &&
+			existingPyLibrary.srcs.Empty() {
+			continue
+		}
+		srcs := existingPyLibrary.srcs
+		if existingPyLibrary.name == packageLibraryName &&
+			existingPyLibrary.declaredSrcCount > 0 &&
+			!cfg.PerFileGeneration() {
+			mergedSrcs := treeset.NewWith(godsutils.StringComparator)
+			srcs.Each(func(index int, filename interface{}) {
+				mergedSrcs.Add(filename)
+			})
+			pyLibraryFilenames.Each(func(index int, filename interface{}) {
+				mergedSrcs.Add(filename)
+			})
+			srcs = mergedSrcs
+		}
+		appendPyLibrary(srcs, existingPyLibrary.name, false, true)
 	}
 
 	if cfg.PerFileGeneration() {
@@ -390,10 +944,10 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 			if autoIncludeInit {
 				srcs.Add(pyLibraryEntrypointFilename)
 			}
-			appendPyLibrary(srcs, pyLibraryTargetName)
+			appendPyLibrary(srcs, pyLibraryTargetName, autoIncludeInit, false)
 		})
-	} else {
-		appendPyLibrary(pyLibraryFilenames, cfg.RenderLibraryName(packageName))
+	} else if !hasPreservedPackageLibrary {
+		appendPyLibrary(pyLibraryFilenames, packageLibraryName, false, false)
 	}
 
 	if hasPyBinaryEntryPointFile {
@@ -503,6 +1057,11 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 			setAnnotations(*annotations).
 			generateImportsAttribute()
 	}
+
+	for _, existingPyTest := range existingPyTests {
+		pyTestTargets = append(pyTestTargets, newPyTestTargetBuilder(existingPyTest.srcs, existingPyTest.name))
+	}
+
 	if (!cfg.PerPackageGenerationRequireTestEntryPoint() || hasPyTestEntryPointFile || hasPyTestEntryPointTarget || cfg.CoarseGrainedGeneration()) && !cfg.PerFileGeneration() {
 		// Create one py_test target per package
 		if hasPyTestEntryPointFile {
@@ -572,6 +1131,7 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 	}
 	emptyRules := py.getRulesWithInvalidSrcs(args, validFilesMap)
 	result.Empty = append(result.Empty, emptyRules...)
+	result.Empty = append(result.Empty, getStaleSourcelessPyLibraryRules(args, packageLibraryName, generatedTargetNames, result.Empty)...)
 	if !collisionErrors.Empty() {
 		it := collisionErrors.Iterator()
 		for it.Next() {
@@ -583,12 +1143,107 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 	return result
 }
 
+// getStaleSourcelessPyLibraryRules returns deps-only py_library targets with no
+// srcs that Gazelle should delete. Hand-written re-export umbrellas must use
+// a "# keep" suffix comment to opt out.
+func getStaleSourcelessPyLibraryRules(
+	args language.GenerateArgs,
+	packageLibraryName string,
+	generatedTargetNames map[string]struct{},
+	alreadyScheduled []*rule.Rule,
+) []*rule.Rule {
+	if args.File == nil {
+		return nil
+	}
+	alreadyEmpty := make(map[string]struct{}, len(alreadyScheduled))
+	for _, r := range alreadyScheduled {
+		alreadyEmpty[r.Name()] = struct{}{}
+	}
+	var stale []*rule.Rule
+	for _, existingRule := range args.File.Rules {
+		if !kindMatches(args.Config, existingRule, pyLibraryKind) {
+			continue
+		}
+		if existingRule.Name() != packageLibraryName {
+			continue
+		}
+		if existingRule.ShouldKeep() {
+			continue
+		}
+		if len(existingRule.AttrStrings("srcs")) != 0 {
+			continue
+		}
+		if _, isGenerated := generatedTargetNames[existingRule.Name()]; isGenerated {
+			continue
+		}
+		if _, dup := alreadyEmpty[existingRule.Name()]; dup {
+			continue
+		}
+		stale = append(stale, newTargetBuilder(
+			pyLibraryKind,
+			existingRule.Name(),
+			"",
+			"",
+			nil,
+			false,
+		).build())
+	}
+	return stale
+}
+
+// ruleListsGazelleManagedSrc reports whether any src is one Gazelle would place
+// in a generated target for this package.
+func ruleListsGazelleManagedSrc(srcs []string, managed map[string]struct{}) bool {
+	for _, src := range srcs {
+		if isTargetSrc(src) || filepath.Ext(src) != ".py" {
+			continue
+		}
+		if _, ok := managed[src]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// isExcludedInitOnlyPackageLibrarySrcOnDisk reports whether src is the only
+// source of the hand-written package library and exists on disk but is hidden
+// from Gazelle generation (for example via gazelle:exclude).
+func isExcludedInitOnlyPackageLibrarySrcOnDisk(
+	args language.GenerateArgs,
+	packageLibraryName string,
+	existingRule *rule.Rule,
+	src string,
+) bool {
+	if !kindMatches(args.Config, existingRule, pyLibraryKind) {
+		return false
+	}
+	if existingRule.Name() != packageLibraryName || src != pyLibraryEntrypointFilename {
+		return false
+	}
+	srcs := existingRule.AttrStrings("srcs")
+	if len(srcs) != 1 {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(args.Dir, src))
+	return err == nil
+}
+
 // getRulesWithInvalidSrcs checks existing Python rules in the BUILD file and return the rules with invalid source files.
 // Invalid source files are files that do not exist or not a target.
 func (py *Python) getRulesWithInvalidSrcs(args language.GenerateArgs, validFilesMap map[string]struct{}) (invalidRules []*rule.Rule) {
 	if args.File == nil {
 		return
 	}
+	packageLibraryName := filepath.Base(args.Dir)
+	if args.Config != nil {
+		if raw, ok := args.Config.Exts[languageName]; ok && raw != nil {
+			cfg := raw.(pythonconfig.Configs)[args.Rel]
+			if cfg != nil {
+				packageLibraryName = cfg.RenderLibraryName(packageLibraryName)
+			}
+		}
+	}
+
 	for _, file := range args.GenFiles {
 		validFilesMap[file] = struct{}{}
 	}
@@ -602,10 +1257,6 @@ func (py *Python) getRulesWithInvalidSrcs(args language.GenerateArgs, validFiles
 	}
 	for _, file := range args.RegularFiles {
 		allFilesMap[file] = struct{}{}
-	}
-
-	isTarget := func(src string) bool {
-		return strings.HasPrefix(src, "@") || strings.HasPrefix(src, "//") || strings.HasPrefix(src, ":")
 	}
 	for _, existingRule := range args.File.Rules {
 		var matchedKind string
@@ -629,13 +1280,35 @@ func (py *Python) getRulesWithInvalidSrcs(args language.GenerateArgs, validFiles
 		}
 		var hasValidSrcs bool
 		for _, src := range srcs {
-			if isTarget(src) {
+			if isTargetSrc(src) {
 				hasValidSrcs = true
 				break
 			}
 			if _, ok := filesMap[src]; ok {
 				hasValidSrcs = true
 				break
+			}
+			if isExcludedInitOnlyPackageLibrarySrcOnDisk(
+				args,
+				packageLibraryName,
+				existingRule,
+				src,
+			) {
+				hasValidSrcs = true
+				break
+			}
+		}
+		if !hasValidSrcs && matchedKind != pyBinaryKind &&
+			!ruleListsGazelleManagedSrc(srcs, validFilesMap) {
+			for _, src := range srcs {
+				if isTargetSrc(src) {
+					hasValidSrcs = true
+					break
+				}
+				if _, err := os.Stat(filepath.Join(args.Dir, src)); err == nil {
+					hasValidSrcs = true
+					break
+				}
 			}
 		}
 		if !hasValidSrcs {

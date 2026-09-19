@@ -1,0 +1,22 @@
+# benchling/, inductive/, and tunelab/ are organizational only; keep all srcs in this target.
+# gazelle:exclude benchling
+# gazelle:exclude inductive
+# gazelle:exclude tunelab
+
+load("@rules_python//python:defs.bzl", "py_library")
+
+py_library(
+    name = "models",
+    srcs = [
+        "benchling/alphafold.py",
+        "inductive/logd.py",
+        "tunelab/ablab.py",
+    ],
+    data = [
+        "inductive/logd.yaml",
+        "tunelab/ablab.yaml",
+    ],
+    tags = ["benchling_monolith"],
+    visibility = ["//visibility:public"],
+    deps = ["//other:dep"],
+)

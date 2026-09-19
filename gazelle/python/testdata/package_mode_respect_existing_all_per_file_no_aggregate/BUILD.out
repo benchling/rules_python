@@ -1,0 +1,15 @@
+# gazelle:python_generation_mode package
+
+load("@rules_python//python:defs.bzl", "py_library")
+
+py_library(
+    name = "config",
+    srcs = ["config.py"],
+    tags = ["keep_config"],
+)
+
+py_library(
+    name = "email_handlers",
+    srcs = ["email_handlers.py"],
+    tags = ["keep_email_handlers"],
+)

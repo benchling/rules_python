@@ -1,0 +1,21 @@
+load("@rules_python//python:defs.bzl", "py_library")
+
+py_library(
+    name = "foo",
+    srcs = ["foo.py"],
+    tags = ["keep_foo"],
+)
+
+py_library(
+    name = "bar",
+    srcs = ["bar.py"],
+    tags = ["keep_bar"],
+)
+
+# Package library name Gazelle generates in package mode; deps-only aggregate.
+py_library(
+    name = "package_mode_respect_existing_split_package_library_empty_aggregate_keep",
+    tags = ["keep_pkg"],
+    visibility = ["//visibility:public"],
+    deps = [":foo"],
+)  # keep

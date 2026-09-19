@@ -1,0 +1,8 @@
+# gazelle:python_generation_mode file
+
+load("@rules_python//python:defs.bzl", "py_library")
+
+py_library(
+    name = "helper",
+    srcs = ["helper.py"],
+)
