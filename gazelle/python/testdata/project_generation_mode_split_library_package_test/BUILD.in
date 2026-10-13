@@ -1,0 +1,23 @@
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
+
+# gazelle:python_generation_mode project
+
+py_library(
+    name = "helpers",
+    srcs = ["helpers.py"],
+)
+
+# Uses the package library name, so the libraries form a split layout.
+py_library(
+    name = "project_generation_mode_split_library_package_test",
+    srcs = ["builders.py"],
+)
+
+# Uses the generated package test name and omits sub/new_test.py.
+py_test(
+    name = "project_generation_mode_split_library_package_test_test",
+    srcs = [
+        "foo_test.py",
+        "sub/bar_test.py",
+    ],
+)

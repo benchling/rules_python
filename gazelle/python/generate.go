@@ -670,12 +670,14 @@ func (py *Python) GenerateRules(args language.GenerateArgs) language.GenerateRes
 	if cfg.PerFileGeneration() {
 		addTargetNamesForSrcs(pyLibraryFilenames, generatedTargetNames)
 		addTargetNamesForSrcs(pyTestFilenames, generatedTargetNames)
-	} else if !splitPackageLibraryLayout {
+	} else {
 		// A name is only reserved when Gazelle emits a target with it. A
 		// test-only package generates no package library, so a hand-written
 		// py_test may carry the package library name, and a package without
-		// tests leaves the generated test name free.
-		if !pyLibraryFilenames.Empty() {
+		// tests leaves the generated test name free. A split library layout
+		// replaces only the generated package library; the package test is
+		// still generated.
+		if !splitPackageLibraryLayout && !pyLibraryFilenames.Empty() {
 			generatedTargetNames[packageLibraryName] = struct{}{}
 		}
 		if !pyTestFilenames.Empty() || hasPyTestEntryPointFile || hasPyTestEntryPointTarget {
