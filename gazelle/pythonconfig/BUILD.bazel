@@ -17,8 +17,12 @@ go_library(
 
 go_test(
     name = "pythonconfig_test",
-    srcs = ["pythonconfig_test.go"],
+    srcs = [
+        "pythonconfig_test.go",
+        "pythonconfig_visibility_test.go",
+    ],
     embed = [":pythonconfig"],
+    deps = ["@com_github_stretchr_testify//assert"],
 )
 
 filegroup(

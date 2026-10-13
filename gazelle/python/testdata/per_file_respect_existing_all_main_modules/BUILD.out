@@ -1,0 +1,34 @@
+load("@rules_python//python:defs.bzl", "py_binary", "py_library")
+
+# gazelle:python_generation_mode file
+
+# Every source is a main module, so this target must be left alone rather than
+# emptied and deleted.
+py_library(
+    name = "custom",
+    srcs = [
+        "a.py",
+        "b.py",
+    ],
+    tags = ["keep_me"],
+)
+
+py_binary(
+    name = "a",
+    srcs = ["a.py"],
+    visibility = ["//:__subpackages__"],
+    deps = [":foo"],
+)
+
+py_binary(
+    name = "b",
+    srcs = ["b.py"],
+    visibility = ["//:__subpackages__"],
+    deps = [":foo"],
+)
+
+py_library(
+    name = "foo",
+    srcs = ["foo.py"],
+    visibility = ["//:__subpackages__"],
+)

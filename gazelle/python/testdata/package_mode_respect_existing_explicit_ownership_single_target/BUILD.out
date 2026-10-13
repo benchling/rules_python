@@ -1,0 +1,9 @@
+# gazelle:python_generation_mode package
+
+load("@rules_python//python:defs.bzl", "py_library")
+
+py_library(
+    name = "only",
+    srcs = ["only.py"],
+    tags = ["keep_only"],
+)

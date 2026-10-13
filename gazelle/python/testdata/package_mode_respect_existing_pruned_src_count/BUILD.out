@@ -1,0 +1,16 @@
+load("@rules_python//python:defs.bzl", "py_library")
+
+# Two sources are declared, so this target claims bar.py even though removed.py
+# no longer exists.
+py_library(
+    name = "custom",
+    srcs = ["bar.py"],
+    tags = ["keep_me"],
+    deps = [":package_mode_respect_existing_pruned_src_count"],
+)
+
+py_library(
+    name = "package_mode_respect_existing_pruned_src_count",
+    srcs = ["foo.py"],
+    visibility = ["//:__subpackages__"],
+)

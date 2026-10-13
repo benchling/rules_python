@@ -1,0 +1,17 @@
+# gazelle:exclude **/__init__.py
+# gazelle:python_generation_mode package
+
+load("@rules_python//python:defs.bzl", "py_library")
+
+py_library(
+    name = "foo",
+    srcs = ["foo.py"],
+    tags = ["keep_foo"],
+)
+
+# Package library name Gazelle generates in package mode; only excluded __init__.py.
+py_library(
+    name = "package_mode_respect_existing_split_package_library_excluded_init",
+    srcs = ["__init__.py"],
+    tags = ["keep_pkg"],
+)

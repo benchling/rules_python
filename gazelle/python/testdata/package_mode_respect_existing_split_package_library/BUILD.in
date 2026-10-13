@@ -1,0 +1,29 @@
+load("@rules_python//python:defs.bzl", "py_library")
+
+py_library(
+    name = "foo",
+    srcs = ["foo.py"],
+    tags = ["keep_foo"],
+)
+
+py_library(
+    name = "bar",
+    srcs = ["bar.py"],
+    tags = ["keep_bar"],
+)
+
+py_library(
+    name = "baz",
+    srcs = ["baz.py"],
+    tags = ["keep_baz"],
+)
+
+# Uses the package library name Gazelle generates in package mode.
+py_library(
+    name = "package_mode_respect_existing_split_package_library",
+    srcs = [
+        "aux.py",
+        "qux.py",
+    ],
+    tags = ["keep_pkg"],
+)

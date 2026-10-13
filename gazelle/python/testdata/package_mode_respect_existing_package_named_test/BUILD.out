@@ -1,0 +1,14 @@
+# gazelle:python_generation_mode project
+
+load("@rules_python//python:defs.bzl", "py_test")
+
+# Test-only package: no package library is generated, so this hand-written
+# target may carry the package library name.
+py_test(
+    name = "package_mode_respect_existing_package_named_test",
+    srcs = [
+        "bar_test.py",
+        "foo_test.py",
+    ],
+    tags = ["keep_me"],
+)

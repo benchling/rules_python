@@ -1,0 +1,18 @@
+# gazelle:python_generation_mode package
+
+load("@rules_python//python:defs.bzl", "py_library")
+
+py_library(
+    name = "foo",
+    srcs = ["foo.py"],
+    tags = ["keep_foo"],
+)
+
+py_library(
+    name = "auth",
+    srcs = [
+        "auth.py",
+        "oauth2.py",
+    ],
+    tags = ["keep_auth"],
+)

@@ -1,0 +1,38 @@
+load("@rules_python//python:defs.bzl", "py_binary", "py_library")
+
+# Gazelle should leave this target alone: it lists sources that always get their
+# own generated targets.
+py_library(
+    name = "custom",
+    srcs = [
+        "__main__.py",
+        "bar.py",
+        "conftest.py",
+    ],
+    tags = ["keep_me"],
+)
+
+py_library(
+    name = "package_mode_respect_existing_entrypoint_srcs",
+    srcs = [
+        "bar.py",
+        "foo.py",
+    ],
+    visibility = ["//:__subpackages__"],
+)
+
+py_binary(
+    name = "package_mode_respect_existing_entrypoint_srcs_bin",
+    srcs = ["__main__.py"],
+    main = "__main__.py",
+    visibility = ["//:__subpackages__"],
+    deps = [":package_mode_respect_existing_entrypoint_srcs"],
+)
+
+py_library(
+    name = "conftest",
+    testonly = True,
+    srcs = ["conftest.py"],
+    visibility = ["//:__subpackages__"],
+    deps = [":package_mode_respect_existing_entrypoint_srcs"],
+)

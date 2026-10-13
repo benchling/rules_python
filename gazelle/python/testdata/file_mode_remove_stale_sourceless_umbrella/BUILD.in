@@ -1,0 +1,16 @@
+# gazelle:python_generation_mode file
+
+load("@rules_python//python:defs.bzl", "py_library")
+
+py_library(
+    name = "widget",
+    srcs = ["widget.py"],
+)
+
+py_library(
+    name = "file_mode_remove_stale_sourceless_umbrella",
+    deps = [
+        ":widget",
+        "//file_mode_remove_stale_sourceless_umbrella/nested",
+    ],
+)

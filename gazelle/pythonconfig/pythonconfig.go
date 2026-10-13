@@ -537,8 +537,30 @@ func (c *Config) RenderProtoName(protoName string) string {
 	return strings.ReplaceAll(c.protoNamingConvention, protoNameNamingConventionSubstitution, strings.TrimSuffix(protoName, "_proto"))
 }
 
+// nonEmptyVisibilityLabels returns labels with empty and whitespace-only entries
+// removed. Comma-separated python_default_visibility directives may include a
+// trailing comma, which strings.Split turns into an empty label.
+func nonEmptyVisibilityLabels(labels []string) []string {
+	if len(labels) == 0 {
+		return labels
+	}
+	filtered := make([]string, 0, len(labels))
+	for _, label := range labels {
+		label = strings.TrimSpace(label)
+		if label == "" {
+			continue
+		}
+		filtered = append(filtered, label)
+	}
+	return filtered
+}
+
 // AppendVisibility adds additional items to the target's visibility.
 func (c *Config) AppendVisibility(visibility string) {
+	visibility = strings.TrimSpace(visibility)
+	if visibility == "" {
+		return
+	}
 	c.visibility = append(c.visibility, visibility)
 }
 
@@ -549,7 +571,7 @@ func (c *Config) Visibility() []string {
 
 // SetDefaultVisibility sets the default visibility of the target.
 func (c *Config) SetDefaultVisibility(visibility []string) {
-	c.defaultVisibility = visibility
+	c.defaultVisibility = nonEmptyVisibilityLabels(visibility)
 }
 
 // DefaultVisibilty returns the target's default visibility.

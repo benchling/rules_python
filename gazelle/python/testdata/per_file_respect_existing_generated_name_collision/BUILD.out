@@ -1,0 +1,31 @@
+load("@rules_python//python:defs.bzl", "py_library")
+
+# gazelle:python_generation_mode file
+
+# "qux" is the name Gazelle generates for qux.py, so this target is not adopted.
+py_library(
+    name = "qux",
+    srcs = ["qux.py"],
+    tags = ["keep_me"],
+    visibility = ["//:__subpackages__"],
+    deps = [":bar"],
+)
+
+py_library(
+    name = "bar",
+    srcs = ["bar.py"],
+    visibility = ["//:__subpackages__"],
+    deps = [":foo"],
+)
+
+py_library(
+    name = "baz",
+    srcs = ["baz.py"],
+    visibility = ["//:__subpackages__"],
+)
+
+py_library(
+    name = "foo",
+    srcs = ["foo.py"],
+    visibility = ["//:__subpackages__"],
+)

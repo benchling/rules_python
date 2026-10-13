@@ -1,0 +1,22 @@
+load("@rules_python//python:defs.bzl", "py_library")
+
+# "conftest" is the name Gazelle generates for conftest.py, so this target is
+# not adopted.
+py_library(
+    name = "conftest",
+    testonly = True,
+    srcs = ["conftest.py"],
+    tags = ["keep_me"],
+    visibility = ["//:__subpackages__"],
+    deps = [":package_mode_respect_existing_conftest_name_collision"],
+)
+
+py_library(
+    name = "package_mode_respect_existing_conftest_name_collision",
+    srcs = [
+        "bar.py",
+        "baz.py",
+        "foo.py",
+    ],
+    visibility = ["//:__subpackages__"],
+)
